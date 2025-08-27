@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16
+    container_name: payshield-core-db-1
+    environment:
+      POSTGRES_USER: payshield
+      POSTGRES_PASSWORD: payshield
+      POSTGRES_DB: payshield
+      TZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payshield -d payshield -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [payshield]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payshield-core-app-1
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/payshield
+      SPRING_DATASOURCE_USERNAME: payshield
+      SPRING_DATASOURCE_PASSWORD: payshield
+      SERVER_PORT: "2406"
+      JAVA_TOOL_OPTIONS: "-XX:+UseZGC -Xms256m -Xmx512m"
+      TZ: Asia/Kolkata
+
+      # Actuator on separate management port
+      MANAGEMENT_SERVER_PORT: "9090"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
+    ports:
+      - "2406:2406"   # app
+      - "9090:9090"   # actuator (published for dev/testing)
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [payshield]
+
+volumes:
+  pgdata:
+
+networks:
+  payshield:
+    driver: bridge

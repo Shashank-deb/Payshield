@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: payshield-core
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/payshield}
+    username: ${DB_USERNAME:payshield}
+    password: ${DB_PASSWORD:payshield}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: ${DB_POOL_TIMEOUT_MS:30000}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate           # schema managed by Flyway, just validate
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc.lob.non_contextual_creation: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: ${APP_PORT:2406}
+
+management:
+  server:
+    port: ${ACTUATOR_PORT:9090}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+security:
+  jwt:
+    # MUST override in prod with >= 32 chars random secret
+    secret: ${SECURITY_JWT_SECRET:CHANGEME_SUPER_LONG_32_CHAR_MIN_SECRET_123456}
+    ttl-seconds: ${SECURITY_JWT_TTL_SECONDS:3600}
+
+bootstrap:
+  admin:
+    email: ${BOOTSTRAP_ADMIN_EMAIL:admin@example.com}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:ChangeMe_123!}
+  defaultTenantId: ${BOOTSTRAP_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html

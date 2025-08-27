@@ -1,0 +1,48 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/payshield_local
+    username: payshield
+    password: payshield
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+server:
+  port: 2406
+
+management:
+  server:
+    port: 9090
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+  endpoint:
+    health:
+      show-details: always
+
+security:
+  jwt:
+    secret: dev_secret_key_123456789012345678901234567890
+    ttl-seconds: 3600
+
+bootstrap:
+  admin:
+    email: admin@local.dev
+    password: admin
+  defaultTenantId: 00000000-0000-0000-0000-000000000001
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+
+
+
+logging:
+  level:
+    org.springframework.security: DEBUG
+    com.payshield.frauddetector.config: DEBUG
