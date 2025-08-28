@@ -41,8 +41,10 @@ springdoc:
     path: /swagger-ui.html
 
 
-
 logging:
   level:
     org.springframework.security: DEBUG
     com.payshield.frauddetector.config: DEBUG
+    com.payshield.frauddetector.domain.DetectionEngine: DEBUG
+    com.payshield.frauddetector.application.InvoiceDetectionService: DEBUG
+    com.payshield.frauddetector.infrastructure.parser.TikaPdfParser: DEBUG

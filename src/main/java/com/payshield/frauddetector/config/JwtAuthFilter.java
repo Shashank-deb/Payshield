@@ -15,17 +15,10 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Enumeration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-/**
- * Robust stateless JWT filter that:
- *  - Never writes a 401 by itself (lets Spring entrypoint do it).
- *  - Accepts multiple Authorization headers and any capitalization/spacing of the 'Bearer ' prefix.
- *  - Sets tenant from 'tenantId'/'tid' claim or X-Tenant-Id header.
- */
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
@@ -37,12 +30,38 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(@NonNull HttpServletRequest req) {
-        String p = req.getRequestURI();
-        if ("OPTIONS".equalsIgnoreCase(req.getMethod())) return true;
-        if (p.equals("/auth/login") || p.equals("/auth/whoami")) return true;
-        if (p.startsWith("/v3/api-docs") || p.startsWith("/swagger-ui") || p.equals("/swagger-ui.html")) return true;
-        if (p.equals("/actuator/health") || p.equals("/actuator/info") || p.equals("/actuator/prometheus")) return true;
-        return false; // Do NOT skip /cases/**
+        String path = req.getRequestURI();
+        String method = req.getMethod();
+
+        log.debug("Checking if should filter: {} {}", method, path);
+
+        // Skip OPTIONS requests
+        if ("OPTIONS".equalsIgnoreCase(method)) {
+            log.debug("Skipping OPTIONS request");
+            return true;
+        }
+
+        // Skip public endpoints
+        if (path.equals("/auth/login") || path.equals("/auth/whoami")) {
+            log.debug("Skipping public auth endpoint: {}", path);
+            return true;
+        }
+
+        // Skip documentation endpoints
+        if (path.startsWith("/v3/api-docs") || path.startsWith("/swagger-ui") || path.equals("/swagger-ui.html")) {
+            log.debug("Skipping documentation endpoint: {}", path);
+            return true;
+        }
+
+        // Skip public actuator endpoints
+        if (path.equals("/actuator/health") || path.equals("/actuator/info") || path.equals("/actuator/prometheus")) {
+            log.debug("Skipping public actuator endpoint: {}", path);
+            return true;
+        }
+
+        // Filter everything else (including /cases/**)
+        log.debug("Will filter request: {} {}", method, path);
+        return false;
     }
 
     @Override
@@ -52,61 +71,87 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             @NonNull FilterChain chain) throws IOException, ServletException {
 
         final String path = request.getRequestURI();
+        final String method = request.getMethod();
+
+        log.debug("Processing JWT filter for: {} {}", method, path);
 
         try {
-            // Parse Authorization header(s) in a robust way
-            String token = null;
-            Enumeration<String> headers = request.getHeaders(HttpHeaders.AUTHORIZATION);
-            while (headers != null && headers.hasMoreElements()) {
-                String raw = headers.nextElement();
-                if (!StringUtils.hasText(raw)) continue;
-                String h = raw.trim();
-                if (h.length() >= 7 && h.regionMatches(true, 0, "Bearer ", 0, 7)) {
-                    token = h.substring(7).trim();
-                    if (StringUtils.hasText(token)) break;
-                }
-            }
+            // Extract Authorization header
+            String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+            log.debug("Authorization header: {}", authHeader != null ? "Bearer ***" : "null");
 
-            // No usable token → proceed; secured endpoints will be handled by entrypoint
-            if (!StringUtils.hasText(token)) {
+            if (!StringUtils.hasText(authHeader) || !authHeader.startsWith("Bearer ")) {
+                log.warn("No valid Authorization header found for: {} {}", method, path);
                 chain.doFilter(request, response);
                 return;
             }
 
+            String token = authHeader.substring(7).trim();
+            if (!StringUtils.hasText(token)) {
+                log.warn("Empty token found for: {} {}", method, path);
+                chain.doFilter(request, response);
+                return;
+            }
+
+            // Validate token and extract subject
             var subjectOpt = jwt.getSubject(token);
             if (subjectOpt.isEmpty()) {
+                log.warn("Invalid or expired token for: {} {}", method, path);
                 chain.doFilter(request, response);
                 return;
             }
 
-            Set<SimpleGrantedAuthority> authorities = jwt.getRoles(token).stream()
-                    .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+            String subject = subjectOpt.get();
+            Set<String> roles = jwt.getRoles(token);
+            log.info("JWT authenticated user: {} with roles: {} for: {} {}", subject, roles, method, path);
+
+            // Convert roles to authorities (add ROLE_ prefix if not present)
+            Set<SimpleGrantedAuthority> authorities = roles.stream()
+                    .map(role -> role.startsWith("ROLE_") ? role : "ROLE_" + role)
                     .map(SimpleGrantedAuthority::new)
                     .collect(Collectors.toSet());
 
-            SecurityContextHolder.getContext().setAuthentication(
-                    new UsernamePasswordAuthenticationToken(subjectOpt.get(), null, authorities)
-            );
+            // Set authentication in security context
+            UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(subject, null, authorities);
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            log.debug("Set authentication for user: {} with authorities: {}", subject, authorities);
 
-            // Multi-tenant: prefer claim, else header
-            jwt.getTenantId(token).ifPresentOrElse(
-                    tid -> {
-                        try { TenantContext.setTenantId(UUID.fromString(tid)); } catch (Exception ignored) {}
-                    },
-                    () -> {
-                        String h = request.getHeader("X-Tenant-Id");
-                        if (StringUtils.hasText(h)) {
-                            try { TenantContext.setTenantId(UUID.fromString(h)); } catch (Exception ignored) {}
-                        }
+            // Handle tenant context - prefer JWT claim over header
+            var tenantIdOpt = jwt.getTenantId(token);
+            if (tenantIdOpt.isPresent()) {
+                try {
+                    UUID tenantId = UUID.fromString(tenantIdOpt.get());
+                    TenantContext.setTenantId(tenantId);
+                    log.debug("Set tenant context from JWT: {}", tenantId);
+                } catch (IllegalArgumentException e) {
+                    log.warn("Invalid tenant ID in JWT token: {}", tenantIdOpt.get());
+                }
+            } else {
+                // Fallback to X-Tenant-Id header
+                String tenantHeader = request.getHeader("X-Tenant-Id");
+                if (StringUtils.hasText(tenantHeader)) {
+                    try {
+                        UUID tenantId = UUID.fromString(tenantHeader.trim());
+                        TenantContext.setTenantId(tenantId);
+                        log.debug("Set tenant context from header: {}", tenantId);
+                    } catch (IllegalArgumentException e) {
+                        log.warn("Invalid tenant ID in header: {}", tenantHeader);
                     }
-            );
-
-            if (path.startsWith("/cases/")) {
-                log.info("JWT OK for {}: sub={}, roles={}, tenant={}", path, subjectOpt.get(), authorities, TenantContext.getTenantId());
+                }
             }
 
+            log.info("Successfully authenticated {} for {} {} with tenant: {}",
+                    subject, method, path, TenantContext.getTenantId());
+
+            chain.doFilter(request, response);
+
+        } catch (Exception e) {
+            log.error("Error in JWT filter for {} {}: {}", method, path, e.getMessage(), e);
+            SecurityContextHolder.clearContext();
             chain.doFilter(request, response);
         } finally {
+            // Always clear tenant context after request
             TenantContext.clear();
         }
     }

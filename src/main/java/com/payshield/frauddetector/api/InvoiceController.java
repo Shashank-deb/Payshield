@@ -7,6 +7,8 @@ import com.payshield.frauddetector.application.UploadInvoiceCommand;
 import com.payshield.frauddetector.config.TenantContext;
 import com.payshield.frauddetector.domain.ports.InvoiceRepository;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +26,7 @@ import java.util.UUID;
 @RequestMapping("/invoices")
 public class InvoiceController {
 
+    private static final Logger log = LoggerFactory.getLogger(InvoiceController.class);
     private final InvoiceDetectionService service;
     private final InvoiceRepository invoices;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -32,16 +35,33 @@ public class InvoiceController {
         this.service = service; this.invoices = invoices;
     }
 
-    @PostMapping(path="/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/upload",
+            consumes = {MediaType.MULTIPART_FORM_DATA_VALUE, MediaType.APPLICATION_OCTET_STREAM_VALUE})
     public ResponseEntity<?> upload(@RequestPart("file") MultipartFile file,
                                     @RequestPart(value="meta", required=false) @Valid UploadInvoiceRequest meta,
                                     @RequestHeader(value="Idempotency-Key", required=false) String idempotencyKey,
                                     @RequestHeader(value="X-Sender-Domain", required=false) String senderDomain) throws IOException {
+
+        log.info("Invoice upload request - filename: {}, contentType: {}, size: {}",
+                file.getOriginalFilename(), file.getContentType(), file.getSize());
+
         UUID tenantId = TenantContext.getTenantId();
-        if (tenantId == null)
+        if (tenantId == null) {
+            log.error("No tenant ID in context");
             return ResponseEntity.badRequest().body(Map.of("error", "Missing X-Tenant-Id header"));
+        }
+
+        log.info("Processing upload for tenant: {}, vendor: {}", tenantId, meta != null ? meta.vendorName : "null");
+
+        // Validate file
+        if (file.isEmpty()) {
+            log.error("Empty file uploaded");
+            return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
+        }
 
         String sha256 = sha256Hex(file.getBytes());
+        log.info("File SHA256: {}", sha256);
+
         UploadInvoiceCommand cmd = new UploadInvoiceCommand(
                 tenantId,
                 meta != null ? meta.vendorName : null,
@@ -53,7 +73,9 @@ public class InvoiceController {
                 file.getInputStream()
         );
 
+        log.info("Calling fraud detection service with vendor: {}", cmd.vendorName);
         var result = service.uploadAndDetect(cmd, sha256);
+        log.info("Fraud detection completed - invoiceId: {}, alreadyExists: {}", result.id(), result.alreadyExists());
 
         return ResponseEntity.ok(Map.of(
                 "status", result.alreadyExists() ? "already_exists" : "created",
