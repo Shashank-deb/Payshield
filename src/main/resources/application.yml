@@ -53,6 +53,15 @@ bootstrap:
     password: ${BOOTSTRAP_ADMIN_PASSWORD:ChangeMe_123!}
   defaultTenantId: ${BOOTSTRAP_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
 
+# Outbox configuration
+app:
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    poll-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
+  storage:
+    basePath: ${STORAGE_BASE_PATH:var/storage}
+
 springdoc:
   api-docs:
     enabled: true

@@ -41,8 +41,11 @@ public class SecurityConfig {
                       .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                       .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
 
-                      // Secured endpoints - role-based access
+                      // Admin-only endpoints
                       .requestMatchers("/actuator/**").hasRole("ADMIN")
+                      .requestMatchers("/outbox/**").hasRole("ADMIN") // Outbox testing endpoints for admins only
+
+                      // Invoice endpoints - analysts and admins can upload, all roles can view
                       .requestMatchers(HttpMethod.POST, "/invoices/upload").hasAnyRole("ANALYST", "ADMIN")
                       .requestMatchers("/invoices/**").hasAnyRole("ANALYST", "ADMIN", "APPROVER")
 

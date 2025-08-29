@@ -104,14 +104,15 @@ public class InvoiceDetectionService {
             outbox.publish(cmd.tenantId, "invoice.flagged", eventPayload);
             log.info("Outbox event published for case: {}", c.getId());
 
-            // Send notification
-            notifier.sendCaseFlagged(cmd.tenantId, c.getId(), Map.of(
-                    "invoiceId", invoice.getId().toString(),
-                    "vendorName", vendorName,
-                    "rules", result.getViolations().toString(),
-                    "amount", amount != null ? amount.toString() : null,
-                    "currency", currency
-            ));
+            // Send notification - use HashMap to allow null values
+            Map<String, Object> notificationPayload = new HashMap<>();
+            notificationPayload.put("invoiceId", invoice.getId().toString());
+            notificationPayload.put("vendorName", vendorName != null ? vendorName : "unknown");
+            notificationPayload.put("rules", result.getViolations().toString());
+            notificationPayload.put("amount", amount != null ? amount.toString() : "unknown");
+            notificationPayload.put("currency", currency != null ? currency : "unknown");
+
+            notifier.sendCaseFlagged(cmd.tenantId, c.getId(), notificationPayload);
             log.info("Notification sent for flagged case: {}", c.getId());
         } else {
             log.info("Invoice not flagged, no case created");

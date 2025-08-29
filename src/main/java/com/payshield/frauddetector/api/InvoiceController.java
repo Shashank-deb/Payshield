@@ -6,7 +6,6 @@ import com.payshield.frauddetector.application.InvoiceDetectionService;
 import com.payshield.frauddetector.application.UploadInvoiceCommand;
 import com.payshield.frauddetector.config.TenantContext;
 import com.payshield.frauddetector.domain.ports.InvoiceRepository;
-import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -35,10 +34,9 @@ public class InvoiceController {
         this.service = service; this.invoices = invoices;
     }
 
-    @PostMapping(value = "/upload",
-            consumes = {MediaType.MULTIPART_FORM_DATA_VALUE, MediaType.APPLICATION_OCTET_STREAM_VALUE})
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> upload(@RequestPart("file") MultipartFile file,
-                                    @RequestPart(value="meta", required=false) @Valid UploadInvoiceRequest meta,
+                                    @RequestPart(value="meta", required=false) String metaJson,
                                     @RequestHeader(value="Idempotency-Key", required=false) String idempotencyKey,
                                     @RequestHeader(value="X-Sender-Domain", required=false) String senderDomain) throws IOException {
 
@@ -49,6 +47,18 @@ public class InvoiceController {
         if (tenantId == null) {
             log.error("No tenant ID in context");
             return ResponseEntity.badRequest().body(Map.of("error", "Missing X-Tenant-Id header"));
+        }
+
+        // Parse meta JSON if provided
+        UploadInvoiceRequest meta = null;
+        if (metaJson != null && !metaJson.isBlank()) {
+            try {
+                meta = mapper.readValue(metaJson, UploadInvoiceRequest.class);
+                log.info("Parsed meta: vendorName={}, currency={}", meta.vendorName, meta.currency);
+            } catch (Exception e) {
+                log.error("Failed to parse meta JSON: {}", metaJson, e);
+                return ResponseEntity.badRequest().body(Map.of("error", "Invalid meta JSON: " + e.getMessage()));
+            }
         }
 
         log.info("Processing upload for tenant: {}, vendor: {}", tenantId, meta != null ? meta.vendorName : "null");
