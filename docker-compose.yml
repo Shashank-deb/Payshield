@@ -1,3 +1,5 @@
+# docker-compose.yml - SECURE ACTUATOR CONFIGURATION
+
 services:
   db:
     image: postgres:16
@@ -39,7 +41,7 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
 
-      # Actuator on separate management port
+      # Actuator on separate management port - INTERNAL ONLY
       MANAGEMENT_SERVER_PORT: ${ACTUATOR_PORT}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
 
@@ -50,8 +52,9 @@ services:
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE}
 
     ports:
-      - "${APP_PORT}:${APP_PORT}"     # app
-      - "${ACTUATOR_PORT}:${ACTUATOR_PORT}"   # actuator (published for dev/testing)
+      - "${APP_PORT}:${APP_PORT}"     # Main app port - KEEP THIS
+      # ❌ REMOVE THIS LINE - Actuator should not be externally accessible
+      # - "${ACTUATOR_PORT}:${ACTUATOR_PORT}"   # SECURITY RISK - REMOVED
     depends_on:
       db:
         condition: service_healthy
@@ -64,3 +67,9 @@ volumes:
 networks:
   payshield:
     driver: bridge
+
+# SECURITY NOTES:
+# 1. Actuator endpoints are now only accessible from INSIDE the container network
+# 2. External access to sensitive endpoints (env, configprops, etc.) is blocked
+# 3. Health checks can still be performed internally for container orchestration
+# 4. Prometheus metrics can be scraped from inside the network if needed
