@@ -33,34 +33,40 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String path = req.getRequestURI();
         String method = req.getMethod();
 
-        log.debug("Checking if should filter: {} {}", method, path);
+        log.info("JwtAuthFilter: Checking request - {} {}", method, path);
 
-        // Skip OPTIONS requests
+        // Skip OPTIONS requests completely
         if ("OPTIONS".equalsIgnoreCase(method)) {
-            log.debug("Skipping OPTIONS request");
+            log.info("JwtAuthFilter: Skipping OPTIONS request for {}", path);
             return true;
         }
 
         // Skip public endpoints
         if (path.equals("/auth/login") || path.equals("/auth/whoami")) {
-            log.debug("Skipping public auth endpoint: {}", path);
+            log.info("JwtAuthFilter: Skipping public auth endpoint: {}", path);
+            return true;
+        }
+
+        // Skip debug endpoints for testing
+        if (path.startsWith("/debug/")) {
+            log.info("JwtAuthFilter: Skipping debug endpoint: {}", path);
             return true;
         }
 
         // Skip documentation endpoints
         if (path.startsWith("/v3/api-docs") || path.startsWith("/swagger-ui") || path.equals("/swagger-ui.html")) {
-            log.debug("Skipping documentation endpoint: {}", path);
+            log.info("JwtAuthFilter: Skipping documentation endpoint: {}", path);
             return true;
         }
 
         // Skip public actuator endpoints
         if (path.equals("/actuator/health") || path.equals("/actuator/info") || path.equals("/actuator/prometheus")) {
-            log.debug("Skipping public actuator endpoint: {}", path);
+            log.info("JwtAuthFilter: Skipping public actuator endpoint: {}", path);
             return true;
         }
 
-        // Filter everything else (including /cases/**)
-        log.debug("Will filter request: {} {}", method, path);
+        // Filter everything else
+        log.info("JwtAuthFilter: Will process authentication for: {} {}", method, path);
         return false;
     }
 
@@ -73,37 +79,42 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         final String path = request.getRequestURI();
         final String method = request.getMethod();
 
-        log.debug("Processing JWT filter for: {} {}", method, path);
+        log.info("JwtAuthFilter: Processing authentication for: {} {}", method, path);
 
         try {
             // Extract Authorization header
             String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
-            log.debug("Authorization header: {}", authHeader != null ? "Bearer ***" : "null");
+            log.info("JwtAuthFilter: Authorization header present: {}", authHeader != null ? "YES" : "NO");
 
             if (!StringUtils.hasText(authHeader) || !authHeader.startsWith("Bearer ")) {
-                log.warn("No valid Authorization header found for: {} {}", method, path);
+                log.warn("JwtAuthFilter: No valid Authorization header found for: {} {}", method, path);
+                log.warn("JwtAuthFilter: Auth header value: {}", authHeader != null ? "Bearer ***" : "null");
+
+                // Don't return here - let Spring Security handle the authentication failure
                 chain.doFilter(request, response);
                 return;
             }
 
             String token = authHeader.substring(7).trim();
             if (!StringUtils.hasText(token)) {
-                log.warn("Empty token found for: {} {}", method, path);
+                log.warn("JwtAuthFilter: Empty token found for: {} {}", method, path);
                 chain.doFilter(request, response);
                 return;
             }
 
+            log.info("JwtAuthFilter: Token extracted successfully, validating...");
+
             // Validate token and extract subject
             var subjectOpt = jwt.getSubject(token);
             if (subjectOpt.isEmpty()) {
-                log.warn("Invalid or expired token for: {} {}", method, path);
+                log.warn("JwtAuthFilter: Invalid or expired token for: {} {}", method, path);
                 chain.doFilter(request, response);
                 return;
             }
 
             String subject = subjectOpt.get();
             Set<String> roles = jwt.getRoles(token);
-            log.info("JWT authenticated user: {} with roles: {} for: {} {}", subject, roles, method, path);
+            log.info("JwtAuthFilter: JWT authenticated user: {} with roles: {} for: {} {}", subject, roles, method, path);
 
             // Convert roles to authorities (add ROLE_ prefix if not present)
             Set<SimpleGrantedAuthority> authorities = roles.stream()
@@ -115,7 +126,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(subject, null, authorities);
             SecurityContextHolder.getContext().setAuthentication(authentication);
-            log.debug("Set authentication for user: {} with authorities: {}", subject, authorities);
+            log.info("JwtAuthFilter: Set authentication for user: {} with authorities: {}", subject, authorities);
 
             // Handle tenant context - prefer JWT claim over header
             var tenantIdOpt = jwt.getTenantId(token);
@@ -123,9 +134,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 try {
                     UUID tenantId = UUID.fromString(tenantIdOpt.get());
                     TenantContext.setTenantId(tenantId);
-                    log.debug("Set tenant context from JWT: {}", tenantId);
+                    log.info("JwtAuthFilter: Set tenant context from JWT: {}", tenantId);
                 } catch (IllegalArgumentException e) {
-                    log.warn("Invalid tenant ID in JWT token: {}", tenantIdOpt.get());
+                    log.warn("JwtAuthFilter: Invalid tenant ID in JWT token: {}", tenantIdOpt.get());
                 }
             } else {
                 // Fallback to X-Tenant-Id header
@@ -134,25 +145,31 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     try {
                         UUID tenantId = UUID.fromString(tenantHeader.trim());
                         TenantContext.setTenantId(tenantId);
-                        log.debug("Set tenant context from header: {}", tenantId);
+                        log.info("JwtAuthFilter: Set tenant context from header: {}", tenantId);
                     } catch (IllegalArgumentException e) {
-                        log.warn("Invalid tenant ID in header: {}", tenantHeader);
+                        log.warn("JwtAuthFilter: Invalid tenant ID in header: {}", tenantHeader);
                     }
                 }
             }
 
-            log.info("Successfully authenticated {} for {} {} with tenant: {}",
+            log.info("JwtAuthFilter: Successfully authenticated {} for {} {} with tenant: {}",
                     subject, method, path, TenantContext.getTenantId());
 
+            // Continue with the filter chain
+            log.info("JwtAuthFilter: Continuing filter chain for {} {}", method, path);
             chain.doFilter(request, response);
+            log.info("JwtAuthFilter: Completed processing for {} {}", method, path);
 
         } catch (Exception e) {
-            log.error("Error in JWT filter for {} {}: {}", method, path, e.getMessage(), e);
+            log.error("JwtAuthFilter: Error in JWT filter for {} {}: {}", method, path, e.getMessage(), e);
             SecurityContextHolder.clearContext();
+
+            // Important: Still continue the chain to let Spring Security handle the error
             chain.doFilter(request, response);
         } finally {
             // Always clear tenant context after request
             TenantContext.clear();
+            log.debug("JwtAuthFilter: Cleared tenant context for {} {}", method, path);
         }
     }
 }

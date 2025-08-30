@@ -40,11 +40,22 @@ springdoc:
     enabled: true
     path: /swagger-ui.html
 
-
+# Enhanced debug logging
 logging:
   level:
+    root: INFO
     org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.web.cors: DEBUG
     com.payshield.frauddetector.config: DEBUG
+    com.payshield.frauddetector.config.JwtAuthFilter: DEBUG
+    com.payshield.frauddetector.config.RequestLoggingFilter: DEBUG
     com.payshield.frauddetector.domain.DetectionEngine: DEBUG
     com.payshield.frauddetector.application.InvoiceDetectionService: DEBUG
     com.payshield.frauddetector.infrastructure.parser.TikaPdfParser: DEBUG
+    # Show all HTTP requests and responses
+    org.springframework.web.servlet.DispatcherServlet: DEBUG
+    org.springframework.web.filter: DEBUG
+    org.apache.catalina.core.ContainerBase: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

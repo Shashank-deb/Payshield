@@ -12,93 +12,101 @@ spring:
       minimum-idle: ${DB_POOL_MIN:2}
       connection-timeout: ${DB_POOL_TIMEOUT_MS:30000}
 
-    jpa:
-      open-in-view: false
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate           # schema managed by Flyway, just validate
+    properties:
       hibernate:
-        ddl-auto: validate           # schema managed by Flyway, just validate
-      properties:
-        hibernate:
-          format_sql: false          # SECURITY: Never format SQL in production
-          jdbc.lob.non_contextual_creation: true
-      show-sql: false                # SECURITY: Never show SQL in production
+        format_sql: false          # SECURITY: Never format SQL in production
+        jdbc.lob.non_contextual_creation: true
+    show-sql: false                # SECURITY: Never show SQL in production
 
-    flyway:
-      enabled: true
-      locations: classpath:db/migration
-      baseline-on-migrate: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
 
+  # File upload security and timeout settings
+  servlet:
+    multipart:
+      max-file-size: ${MAX_FILE_SIZE:10MB}      # Prevent DoS via large files
+      max-request-size: ${MAX_REQUEST_SIZE:10MB}
+      resolve-lazily: true                      # Only parse when accessed
+
+  # Add connection timeout settings
+  mvc:
+    async:
+      request-timeout: 60000  # 60 seconds timeout for async requests
+
+server:
+  port: ${APP_PORT:2406}
+  # SECURITY: Hide server information
+  server-header:
+  error:
+    include-stacktrace: never
+    include-message: never
+#  # Add connection timeout settings
+#  connection-timeout: 20000  # 20 seconds
+#  keep-alive-timeout: 20000  # 20 seconds
+
+management:
   server:
-    port: ${APP_PORT:2406}
-    # SECURITY: Hide server information
-    server-header:
-    error:
-      include-stacktrace: never
-      include-message: never
+    port: ${ACTUATOR_PORT:9090}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus  # Only expose necessary endpoints
+  endpoint:
+    health:
+      show-details: when_authorized     # Hide health details from unauthorized users
+    info:
+      env:
+        enabled: false                  # Don't expose environment variables
 
-  management:
-    server:
-      port: ${ACTUATOR_PORT:9090}
-    endpoints:
-      web:
-        exposure:
-          include: health,info,prometheus  # Only expose necessary endpoints
-    endpoint:
-      health:
-        show-details: when_authorized     # Hide health details from unauthorized users
-      info:
-        env:
-          enabled: false                  # Don't expose environment variables
+security:
+  jwt:
+    # SECURITY: Must be provided via environment - no default
+    secret: ${SECURITY_JWT_SECRET}
+    ttl-seconds: ${SECURITY_JWT_TTL_SECONDS:3600}
 
-  security:
-    jwt:
-      # SECURITY: Must be provided via environment - no default
-      secret: ${SECURITY_JWT_SECRET}
-      ttl-seconds: ${SECURITY_JWT_TTL_SECONDS:3600}
+bootstrap:
+  admin:
+    # SECURITY: Must be provided via environment - no defaults
+    email: ${BOOTSTRAP_ADMIN_EMAIL}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD}
+  defaultTenantId: ${BOOTSTRAP_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
 
-  bootstrap:
-    admin:
-      # SECURITY: Must be provided via environment - no defaults
-      email: ${BOOTSTRAP_ADMIN_EMAIL}
-      password: ${BOOTSTRAP_ADMIN_PASSWORD}
-    defaultTenantId: ${BOOTSTRAP_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
+# Outbox configuration
+app:
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    poll-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
+  storage:
+    basePath: ${STORAGE_BASE_PATH:var/storage}
 
-  # Outbox configuration
-  app:
-    outbox:
-      enabled: ${OUTBOX_ENABLED:true}
-      poll-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
-      batch-size: ${OUTBOX_BATCH_SIZE:50}
-    storage:
-      basePath: ${STORAGE_BASE_PATH:var/storage}
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:false}          # Disable in production
+  swagger-ui:
+    enabled: ${SWAGGER_UI_ENABLED:false}        # Disable in production
+    path: /swagger-ui.html
 
-  # File upload security
-  spring:
-    servlet:
-      multipart:
-        max-file-size: ${MAX_FILE_SIZE:10MB}      # Prevent DoS via large files
-        max-request-size: ${MAX_REQUEST_SIZE:10MB}
-        resolve-lazily: true                      # Only parse when accessed
-
-  springdoc:
-    api-docs:
-      enabled: ${API_DOCS_ENABLED:false}          # Disable in production
-    swagger-ui:
-      enabled: ${SWAGGER_UI_ENABLED:false}        # Disable in production
-      path: /swagger-ui.html
-
-  # SECURITY: Restrict logging in production
-  logging:
-    level:
-      org.springframework.security: ${SECURITY_LOG_LEVEL:WARN}
-      org.hibernate.SQL: ERROR                   # Never log SQL
-      org.hibernate.type.descriptor.sql: ERROR  # Never log SQL parameters
-      org.springframework.web: ${WEB_LOG_LEVEL:WARN}
-    pattern:
-      console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"  # No sensitive data
-    file:
-      name: ${LOG_FILE:logs/payshield.log}
-    logback:
-      rollingpolicy:
-        max-file-size: 50MB
-        total-size-cap: 500MB
-        max-history: 30
+# SECURITY: Restrict logging in production
+logging:
+  level:
+    org.springframework.security: ${SECURITY_LOG_LEVEL:WARN}
+    org.hibernate.SQL: ERROR                   # Never log SQL
+    org.hibernate.type.descriptor.sql: ERROR  # Never log SQL parameters
+    org.springframework.web: ${WEB_LOG_LEVEL:WARN}
+    org.springframework.web.cors: DEBUG        # Enable CORS debugging temporarily
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"  # No sensitive data
+  file:
+    name: ${LOG_FILE:logs/payshield.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 50MB
+      total-size-cap: 500MB
+      max-history: 30
