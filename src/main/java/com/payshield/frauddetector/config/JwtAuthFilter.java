@@ -128,7 +128,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(authentication);
             log.info("JwtAuthFilter: Set authentication for user: {} with authorities: {}", subject, authorities);
 
-            // Handle tenant context - prefer JWT claim over header
+            // SECURITY FIX: Get tenant ONLY from JWT token - NEVER trust user headers
             var tenantIdOpt = jwt.getTenantId(token);
             if (tenantIdOpt.isPresent()) {
                 try {
@@ -138,19 +138,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 } catch (IllegalArgumentException e) {
                     log.warn("JwtAuthFilter: Invalid tenant ID in JWT token: {}", tenantIdOpt.get());
                 }
-            } else {
-                // Fallback to X-Tenant-Id header
-                String tenantHeader = request.getHeader("X-Tenant-Id");
-                if (StringUtils.hasText(tenantHeader)) {
-                    try {
-                        UUID tenantId = UUID.fromString(tenantHeader.trim());
-                        TenantContext.setTenantId(tenantId);
-                        log.info("JwtAuthFilter: Set tenant context from header: {}", tenantId);
-                    } catch (IllegalArgumentException e) {
-                        log.warn("JwtAuthFilter: Invalid tenant ID in header: {}", tenantHeader);
-                    }
-                }
             }
+
+            // REMOVED SECURITY VULNERABILITY:
+            // No fallback to X-Tenant-Id header - headers are user-controlled and cannot be trusted!
+            // The old code allowed tenant spoofing by changing the X-Tenant-Id header
 
             log.info("JwtAuthFilter: Successfully authenticated {} for {} {} with tenant: {}",
                     subject, method, path, TenantContext.getTenantId());
