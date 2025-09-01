@@ -46,3 +46,12 @@ storage/
 ### Logs ###
 logs/
 *.log
+
+
+
+# Secrets
+.env.backup
+
+# Build & IDE
+.idea/
+.DS_Store
