@@ -123,12 +123,46 @@ app:
     connection-timeout: ${CLAMAV_CONNECTION_TIMEOUT:5000}
     fail-secure: ${CLAMAV_FAIL_SECURE:false}
 
+# Step 11: OpenAPI/Swagger Configuration
 springdoc:
   api-docs:
-    enabled: ${API_DOCS_ENABLED:false}
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /v3/api-docs
+    groups:
+      enabled: true
   swagger-ui:
-    enabled: ${SWAGGER_UI_ENABLED:false}
+    enabled: ${SWAGGER_UI_ENABLED:true}
     path: /swagger-ui.html
+    config-url: /v3/api-docs/swagger-config
+    url: /v3/api-docs
+    # Enhanced Swagger UI features
+    display-request-duration: true
+    groups-order: DESC
+    operations-sorter: method
+    disable-swagger-default-url: true
+    use-root-path: true
+    try-it-out-enabled: true
+    filter: true
+    # OAuth2 configuration placeholder (for future MFA integration)
+    oauth2-redirect-url: /swagger-ui/oauth2-redirect.html
+  # Show actual class names instead of generic "Object"
+  show-actuator: false
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+  # Group endpoints by tags
+  group-configs:
+    - group: 'authentication'
+      display-name: 'Authentication APIs'
+      paths-to-match: '/auth/**'
+    - group: 'invoice-processing'
+      display-name: 'Invoice Processing APIs'
+      paths-to-match: '/invoices/**'
+    - group: 'case-management'
+      display-name: 'Case Management APIs'
+      paths-to-match: '/cases/**'
+    - group: 'administration'
+      display-name: 'Administration APIs'
+      paths-to-match: '/outbox/**'
 
 # Logging configuration - container-friendly paths
 logging:
@@ -142,6 +176,9 @@ logging:
     com.payshield.frauddetector.api.InvoiceController: INFO
     org.springframework.web.multipart: ${MULTIPART_LOG_LEVEL:WARN}
     org.apache.tika: ${TIKA_LOG_LEVEL:WARN}
+    # Reduce Tika external parser noise
+    org.apache.tika.parser.external: WARN
+    org.apache.tika.parser.ocr: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   file:
@@ -199,25 +236,32 @@ security:
 
 bootstrap:
   admin:
-    email: admin@local.dev
-    password: admin
+    email: admin@yourcompany.com
+    password: 8eXlClc9INVRyGQ8
   defaultTenantId: 00000000-0000-0000-0000-000000000001
 
-# Local development settings - Step 5
+# Local development settings - Step 5 & 11
 app:
   clamav:
-    enabled: false
+    enabled: true  # Enable ClamAV in local for testing
     fail-secure: false
   upload:
     strict-mime-check: true
     validate-content: true
 
+# Step 11: Full Swagger UI enabled in local development
 springdoc:
   api-docs:
     enabled: true
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
+    # Local development enhancements
+    try-it-out-enabled: true
+    filter: true
+    display-request-duration: true
+    # Show all endpoint groups
+    urls-primary-name: 'PayShield API v1.0'
 
 # Enhanced local development logging
 logging:
@@ -237,6 +281,9 @@ logging:
     org.apache.tika: DEBUG
     org.springframework.web.servlet.DispatcherServlet: DEBUG
     org.springframework.web.filter: DEBUG
+    # Reduce external parser noise in local too
+    org.apache.tika.parser.external: WARN
+    org.apache.tika.parser.ocr: WARN
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
   file:
@@ -266,6 +313,13 @@ server:
     include-message: never
     include-binding-errors: never
 
+# Step 11: Disable Swagger UI in production for security
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 # Production logging
 logging:
   level:
@@ -273,5 +327,54 @@ logging:
     com.payshield.frauddetector: INFO
     com.payshield.frauddetector.infrastructure.security: INFO
     com.payshield.frauddetector.api.InvoiceController: INFO
+    # Completely silence external parser logs in production
+    org.apache.tika.parser.external: ERROR
+    org.apache.tika.parser.ocr: ERROR
   file:
     name: /app/logs/payshield.log
+
+---
+# Step 11: Testing profile for automated tests
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  # In-memory H2 database for fast tests
+  datasource:
+    url: jdbc:h2:mem:testdb
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+
+  # Disable external integrations in tests
+  flyway:
+    enabled: false
+
+# Test configuration
+app:
+  clamav:
+    enabled: false
+  upload:
+    validate-content: false
+    strict-mime-check: false
+
+# Disable Swagger in tests
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+# Minimal logging in tests
+logging:
+  level:
+    root: WARN
+    com.payshield.frauddetector: INFO
+    org.apache.tika: ERROR
+    org.springframework: WARN

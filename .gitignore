@@ -78,3 +78,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# ClamAV DB
+/data/clamav/db/*.cvd

@@ -23,9 +23,11 @@ services:
     restart: unless-stopped
     networks: [payshield]
 
-  # ClamAV Antivirus Service - FIXED Configuration
+  # In your docker-compose.yml, update the ClamAV service:
+
+  # ClamAV Antivirus Service - UPDATED to latest version
   clamav:
-    image: clamav/clamav:1.0.7
+    image: clamav/clamav:1.0.9  # Updated to latest stable version
     container_name: payshield-clamav-1
     environment:
       # FIXED: Simplified ClamAV configuration
@@ -49,7 +51,6 @@ services:
           memory: 2G
         reservations:
           memory: 1G
-
   # Main Application - FIXED Configuration
   app:
     build:
@@ -84,7 +85,8 @@ services:
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
 
       # Application Configuration
-      STORAGE_BASE_PATH: ${STORAGE_BASE_PATH}
+#      STORAGE_BASE_PATH: ${STORAGE_BASE_PATH}
+      STORAGE_BASE_PATH: /app/tmp/storage
       OUTBOX_ENABLED: ${OUTBOX_ENABLED}
       OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE}
