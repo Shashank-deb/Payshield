@@ -10,11 +10,10 @@ spring:
       mail.smtp.auth: true
       mail.smtp.starttls.enable: true
 
-
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/payshield}
     username: ${DB_USERNAME:payshield}
-    password: ${DB_PASSWORD}  # No default - must be provided via environment
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: ${DB_POOL_MAX:10}
@@ -24,40 +23,51 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: validate           # schema managed by Flyway, just validate
+      ddl-auto: validate
     properties:
       hibernate:
-        format_sql: false          # SECURITY: Never format SQL in production
+        format_sql: false
         jdbc.lob.non_contextual_creation: true
-    show-sql: false                # SECURITY: Never show SQL in production
+    show-sql: false
 
   flyway:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
 
-  # File upload security and timeout settings
+  # Enhanced file upload security - Step 5
   servlet:
     multipart:
-      max-file-size: ${MAX_FILE_SIZE:10MB}      # Prevent DoS via large files
+      max-file-size: ${MAX_FILE_SIZE:10MB}
       max-request-size: ${MAX_REQUEST_SIZE:10MB}
-      resolve-lazily: true                      # Only parse when accessed
+      resolve-lazily: true
+      file-size-threshold: 0
+      location: ${TEMP_DIR:${java.io.tmpdir}}/payshield
 
-  # Add connection timeout settings
   mvc:
     async:
-      request-timeout: 60000  # 60 seconds timeout for async requests
+      request-timeout: 60000
 
 server:
   port: ${APP_PORT:2406}
-  # SECURITY: Hide server information
   server-header:
   error:
     include-stacktrace: never
     include-message: never
-#  # Add connection timeout settings
-#  connection-timeout: 20000  # 20 seconds
-#  keep-alive-timeout: 20000  # 20 seconds
+    include-binding-errors: never
+
+  # FIXED: Use correct Spring Boot 3.x property name
+  max-http-request-header-size: ${MAX_HEADER_SIZE:8KB}
+
+  # Modern Spring Boot 3.x Tomcat configuration
+  tomcat:
+    connection-timeout: 20s
+    keep-alive-timeout: 20s
+    max-connections: 8192
+    accept-count: 100
+    threads:
+      max: 200
+      min-spare: 10
 
 management:
   server:
@@ -65,72 +75,203 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus  # Only expose necessary endpoints
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: when_authorized
       probes:
         enabled: true
-      # Hide health details from unauthorized users
     info:
       env:
         enabled: false
-        # Don't expose environment variables
-
-
 
 security:
   jwt:
-    # SECURITY: Must be provided via environment - no default
     secret: ${SECURITY_JWT_SECRET}
     ttl-seconds: ${SECURITY_JWT_TTL_SECONDS:3600}
 
 bootstrap:
   admin:
-    # SECURITY: Must be provided via environment - no defaults
     email: ${BOOTSTRAP_ADMIN_EMAIL}
     password: ${BOOTSTRAP_ADMIN_PASSWORD}
   defaultTenantId: ${BOOTSTRAP_DEFAULT_TENANT_ID:00000000-0000-0000-0000-000000000001}
 
-# Outbox configuration
+# Application configuration with Step 5 enhancements
 app:
   outbox:
     enabled: ${OUTBOX_ENABLED:true}
     poll-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
     batch-size: ${OUTBOX_BATCH_SIZE:50}
+
   storage:
     basePath: ${STORAGE_BASE_PATH:var/storage}
 
+  # File Upload Security Configuration - Step 5
+  upload:
+    max-file-size: ${MAX_FILE_SIZE:10MB}
+    allowed-mime-types:
+      - application/pdf
+    validate-content: ${VALIDATE_FILE_CONTENT:true}
+    strict-mime-check: ${STRICT_MIME_CHECK:true}
+
+  # ClamAV Antivirus Configuration - Step 5
+  clamav:
+    enabled: ${CLAMAV_ENABLED:false}
+    host: ${CLAMAV_HOST:clamav}
+    port: ${CLAMAV_PORT:3310}
+    timeout: ${CLAMAV_TIMEOUT:30000}
+    connection-timeout: ${CLAMAV_CONNECTION_TIMEOUT:5000}
+    fail-secure: ${CLAMAV_FAIL_SECURE:false}
+
 springdoc:
   api-docs:
-    enabled: ${API_DOCS_ENABLED:false}          # Disable in production
+    enabled: ${API_DOCS_ENABLED:false}
   swagger-ui:
-    enabled: ${SWAGGER_UI_ENABLED:false}        # Disable in production
+    enabled: ${SWAGGER_UI_ENABLED:false}
     path: /swagger-ui.html
 
-# SECURITY: Restrict logging in production
+# Logging configuration - container-friendly paths
 logging:
   level:
     org.springframework.security: ${SECURITY_LOG_LEVEL:WARN}
-    org.hibernate.SQL: ERROR                   # Never log SQL
-    org.hibernate.type.descriptor.sql: ERROR  # Never log SQL parameters
+    org.hibernate.SQL: ERROR
+    org.hibernate.type.descriptor.sql: ERROR
     org.springframework.web: ${WEB_LOG_LEVEL:WARN}
-    org.springframework.web.cors: DEBUG        # Enable CORS debugging temporarily
+    org.springframework.web.cors: DEBUG
+    com.payshield.frauddetector.infrastructure.security: INFO
+    com.payshield.frauddetector.api.InvoiceController: INFO
+    org.springframework.web.multipart: ${MULTIPART_LOG_LEVEL:WARN}
+    org.apache.tika: ${TIKA_LOG_LEVEL:WARN}
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n"  # No sensitive data
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   file:
-    name: ${LOG_FILE:logs/payshield.log}
+    name: ${LOG_FILE:/app/logs/payshield.log}
   logback:
     rollingpolicy:
       max-file-size: 50MB
       total-size-cap: 500MB
       max-history: 30
 
-
+# OpenTelemetry configuration
 otel:
   resource:
     attributes: service.name=${spring.application.name:payshield-core}
-# If you want to bind endpoint via YAML instead of env:
-#  exporter:
-#    otlp:
-#      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:}
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:}
+
+---
+# Local development profile
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  # Local development database
+  datasource:
+    url: jdbc:postgresql://db:5432/payshield
+    username: payshield
+    password: payshield
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+server:
+  port: 2406
+
+management:
+  server:
+    port: 9090
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+  endpoint:
+    health:
+      show-details: always
+
+security:
+  jwt:
+    secret: dev_secret_key_123456789012345678901234567890
+    ttl-seconds: 3600
+
+bootstrap:
+  admin:
+    email: admin@local.dev
+    password: admin
+  defaultTenantId: 00000000-0000-0000-0000-000000000001
+
+# Local development settings - Step 5
+app:
+  clamav:
+    enabled: false
+    fail-secure: false
+  upload:
+    strict-mime-check: true
+    validate-content: true
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+
+# Enhanced local development logging
+logging:
+  level:
+    root: INFO
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.web.cors: DEBUG
+    org.springframework.web.multipart: DEBUG
+    com.payshield.frauddetector.config: DEBUG
+    com.payshield.frauddetector.config.JwtAuthFilter: DEBUG
+    com.payshield.frauddetector.config.RequestLoggingFilter: DEBUG
+    com.payshield.frauddetector.domain.DetectionEngine: DEBUG
+    com.payshield.frauddetector.application.InvoiceDetectionService: DEBUG
+    com.payshield.frauddetector.infrastructure.parser.TikaPdfParser: DEBUG
+    com.payshield.frauddetector.infrastructure.security: DEBUG
+    org.apache.tika: DEBUG
+    org.springframework.web.servlet.DispatcherServlet: DEBUG
+    org.springframework.web.filter: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: # No file logging in local development
+
+---
+# Production profile with full security enabled
+spring:
+  config:
+    activate:
+      on-profile: production
+
+# Production security settings
+app:
+  clamav:
+    enabled: true
+    fail-secure: true
+  storage:
+    scan-on-upload: true
+  upload:
+    strict-mime-check: true
+    validate-content: true
+
+server:
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+
+# Production logging
+logging:
+  level:
+    root: WARN
+    com.payshield.frauddetector: INFO
+    com.payshield.frauddetector.infrastructure.security: INFO
+    com.payshield.frauddetector.api.InvoiceController: INFO
+  file:
+    name: /app/logs/payshield.log
