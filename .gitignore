@@ -55,3 +55,26 @@ logs/
 # Build & IDE
 .idea/
 .DS_Store
+
+# Additional Security - All credential files
+*.env*
+.env.*
+.env-*
+env.*
+environment.*
+credentials.*
+secrets.*
+
+# Backup files
+*.backup
+*.bak
+*.old
+*.orig
+*.save
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
