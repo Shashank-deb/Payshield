@@ -85,6 +85,30 @@ public class DetectionEngine {
             "tempmail.com", "10minutemail.com", "guerrillamail.com", "mailinator.com"
     );
 
+    /**
+     * LEGACY METHOD: Basic evaluation with minimal parameters (backward compatibility)
+     * This method maintains compatibility with existing code that doesn't have full invoice data
+     */
+    public Result evaluateBasic(UUID tenantId, String vendorName, String bankLast4,
+                                Optional<String> senderDomain, VendorHistoryRepository vendorRepo) {
+
+        log.info("Starting BASIC fraud detection - tenant: {}, vendor: {}, bankLast4: {}",
+                tenantId, vendorName, bankLast4);
+
+        Result r = new Result();
+
+        // Run only the basic existing rules
+        evaluateExistingRules(tenantId, vendorName, bankLast4, senderDomain, vendorRepo, r);
+
+        log.info("Basic fraud detection completed - riskScore: {}, violations: {}",
+                r.getRiskScore(), r.getViolations());
+        return r;
+    }
+
+    /**
+     * ENHANCED METHOD: Full evaluation with all invoice data and enhanced fraud detection
+     * This is the main method that should be used for comprehensive fraud detection
+     */
     public Result evaluate(UUID tenantId, String vendorName, String bankLast4, String fullIban,
                            BigDecimal amount, String currency, Optional<String> senderDomain,
                            OffsetDateTime submissionTime, VendorHistoryRepository vendorRepo) {
@@ -94,10 +118,10 @@ public class DetectionEngine {
 
         Result r = new Result();
 
-        // EXISTING RULES (keep your current logic)
+        // Run existing fraud detection logic
         evaluateExistingRules(tenantId, vendorName, bankLast4, senderDomain, vendorRepo, r);
 
-        // NEW ENHANCED RULES
+        // Run new enhanced rules
         evaluateIbanChecksum(fullIban, r);
         evaluateAmountPatterns(amount, currency, r);
         evaluateSubmissionTiming(submissionTime, r);
@@ -107,14 +131,17 @@ public class DetectionEngine {
         // TODO: Add velocity checking (requires invoice history)
         // evaluateVelocityAnomalies(tenantId, vendorName, vendorRepo, r);
 
-        log.info("Enhanced fraud detection completed - riskScore: {}, violations: {}",
+        log.info("Enhanced fraud detection completed - finalRiskScore: {}, violations: {}",
                 r.getRiskScore(), r.getViolations());
         return r;
     }
 
+    /**
+     * Evaluate existing fraud detection rules (preserves original logic)
+     */
     private void evaluateExistingRules(UUID tenantId, String vendorName, String bankLast4,
                                        Optional<String> senderDomain, VendorHistoryRepository vendorRepo, Result r) {
-        // Your existing logic - keep as is
+
         Optional<Vendor> existing = vendorRepo.findByName(tenantId, vendorName);
 
         if (existing.isEmpty()) {
@@ -347,7 +374,7 @@ public class DetectionEngine {
             String country = entry.getKey();
             String pattern = entry.getValue();
 
-            if (!country.equals(ibanCountry) && vendorName.matches(".*(" + pattern + ").*")) {
+            if (!country.equals(ibanCountry) && vendorName != null && vendorName.matches(".*(" + pattern + ").*")) {
                 log.warn("Geographic mismatch: IBAN country {} but vendor name suggests {}: {}",
                         ibanCountry, country, vendorName);
                 r.add(Rule.COUNTRY_MISMATCH);
@@ -371,76 +398,6 @@ public class DetectionEngine {
         // - Sudden spike in invoice frequency
 
         log.debug("Velocity analysis not yet implemented - requires invoice history queries");
-    }
-
-    /**
-     * Enhanced wrapper that maintains backward compatibility
-     */
-    public Result evaluate(UUID tenantId, String vendorName, String bankLast4, Optional<String> senderDomain,
-                           VendorHistoryRepository vendorRepo) {
-        // Call enhanced version with default values
-        return evaluate(tenantId, vendorName, bankLast4, null, null, null, senderDomain,
-                OffsetDateTime.now(), vendorRepo);
-    }
-
-    /**
-     * NEW: Enhanced evaluation with full invoice data
-     */
-    public Result evaluate(UUID tenantId, String vendorName, String bankLast4, String fullIban,
-                           BigDecimal amount, String currency, Optional<String> senderDomain,
-                           OffsetDateTime submissionTime, VendorHistoryRepository vendorRepo) {
-
-        log.info("Starting ENHANCED fraud detection - tenant: {}, vendor: {}, amount: {} {}",
-                tenantId, vendorName, amount, currency);
-
-        Result r = new Result();
-
-        // Run existing fraud detection logic
-        evaluateExistingRules(tenantId, vendorName, bankLast4, senderDomain, vendorRepo, r);
-
-        // Run new enhanced rules
-        evaluateIbanChecksum(fullIban, r);
-        evaluateAmountPatterns(amount, currency, r);
-        evaluateSubmissionTiming(submissionTime, r);
-        evaluateSenderDomain(senderDomain, r);
-        evaluateGeographicConsistency(fullIban, vendorName, r);
-
-        log.info("Enhanced fraud detection completed - finalRiskScore: {}, violations: {}",
-                r.getRiskScore(), r.getViolations());
-        return r;
-    }
-
-    private void evaluateExistingRules(UUID tenantId, String vendorName, String bankLast4,
-                                       Optional<String> senderDomain, VendorHistoryRepository vendorRepo, Result r) {
-        // Your existing DetectionEngine logic goes here
-        Optional<Vendor> existing = vendorRepo.findByName(tenantId, vendorName);
-
-        if (existing.isEmpty()) {
-            if (bankLast4 != null && !bankLast4.isBlank()) {
-                r.add(Rule.NEW_ACCOUNT);
-            }
-        } else {
-            Vendor vendor = existing.get();
-            String existingLast4 = vendor.getCurrentBankLast4();
-
-            if (bankLast4 != null && !bankLast4.isBlank()) {
-                if (existingLast4 == null || existingLast4.isBlank()) {
-                    r.add(Rule.CHANGED_ACCOUNT);
-                } else if (!Objects.equals(existingLast4, bankLast4)) {
-                    r.add(Rule.CHANGED_ACCOUNT);
-                }
-            }
-
-            String expectedDomain = vendor.getEmailDomain();
-            if (senderDomain.isPresent() && expectedDomain != null &&
-                    !senderDomain.get().endsWith(expectedDomain)) {
-                r.add(Rule.SENDER_MISMATCH);
-            }
-        }
-
-        if (bankLast4 != null && bankLast4.length() != 4) {
-            r.add(Rule.INVALID_FORMAT);
-        }
     }
 
     /**

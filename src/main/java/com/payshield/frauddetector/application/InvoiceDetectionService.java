@@ -25,20 +25,36 @@ public class InvoiceDetectionService {
     private final PdfParser parser;
     private final OutboxPort outbox;
 
-    // UPDATED: Use enhanced detection engine
+    // Use enhanced detection engine
     private final DetectionEngine engine = new DetectionEngine();
 
-    public interface PdfParser { Parsed parse(Path storedPath); }
-    public static class Parsed {
-        public String vendorName; public BigDecimal amount; public String currency;
-        public String bankIban; public String bankSwift; public String bankLast4;
+    public interface PdfParser {
+        Parsed parse(Path storedPath);
     }
-    public interface OutboxPort { void publish(UUID tenantId, String type, String jsonPayload); }
 
-    public InvoiceDetectionService(InvoiceRepository invoiceRepo, VendorHistoryRepository vendorRepo, CaseRepository caseRepo,
-                                   FileStoragePort storage, NotifierPort notifier, PdfParser parser, OutboxPort outbox) {
-        this.invoiceRepo = invoiceRepo; this.vendorRepo = vendorRepo; this.caseRepo = caseRepo;
-        this.storage = storage; this.notifier = notifier; this.parser = parser; this.outbox = outbox;
+    public static class Parsed {
+        public String vendorName;
+        public BigDecimal amount;
+        public String currency;
+        public String bankIban;
+        public String bankSwift;
+        public String bankLast4;
+    }
+
+    public interface OutboxPort {
+        void publish(UUID tenantId, String type, String jsonPayload);
+    }
+
+    public InvoiceDetectionService(InvoiceRepository invoiceRepo, VendorHistoryRepository vendorRepo,
+                                   CaseRepository caseRepo, FileStoragePort storage, NotifierPort notifier,
+                                   PdfParser parser, OutboxPort outbox) {
+        this.invoiceRepo = invoiceRepo;
+        this.vendorRepo = vendorRepo;
+        this.caseRepo = caseRepo;
+        this.storage = storage;
+        this.notifier = notifier;
+        this.parser = parser;
+        this.outbox = outbox;
     }
 
     @Transactional
@@ -72,19 +88,19 @@ public class InvoiceDetectionService {
                 vendorName, currency, amount, parsed.bankLast4,
                 parsed.bankIban != null ? parsed.bankIban.substring(0, 4) + "****" : "null");
 
-        // ENHANCED: Run fraud detection with full invoice data
+        // ENHANCED: Run fraud detection with full invoice data using the correct method signature
         log.info("Running ENHANCED fraud detection with full invoice context...");
 
         DetectionEngine.Result result = engine.evaluate(
-                cmd.tenantId,
-                vendorName,
-                parsed.bankLast4,
-                parsed.bankIban,           // Full IBAN for checksum validation
-                amount,                    // Amount for pattern analysis
-                currency,                  // Currency for analysis
-                cmd.senderDomain,
-                OffsetDateTime.now(),      // Submission timing
-                vendorRepo
+                cmd.tenantId,           // tenantId
+                vendorName,             // vendorName
+                parsed.bankLast4,       // bankLast4
+                parsed.bankIban,        // fullIban for checksum validation
+                amount,                 // amount for pattern analysis
+                currency,               // currency for analysis
+                cmd.senderDomain,       // senderDomain
+                OffsetDateTime.now(),   // submissionTime
+                vendorRepo              // vendorRepo
         );
 
         // Get risk assessment
@@ -104,8 +120,8 @@ public class InvoiceDetectionService {
 
         // Save invoice
         log.info("Saving invoice with vendorId: {}", vendorId);
-        Invoice invoice = new Invoice(UUID.randomUUID(), cmd.tenantId, vendorId, OffsetDateTime.now(), amount, currency,
-                parsed.bankIban, parsed.bankSwift, parsed.bankLast4, null, fileSha256);
+        Invoice invoice = new Invoice(UUID.randomUUID(), cmd.tenantId, vendorId, OffsetDateTime.now(),
+                amount, currency, parsed.bankIban, parsed.bankSwift, parsed.bankLast4, null, fileSha256);
         invoiceRepo.save(invoice);
         log.info("Invoice saved with ID: {}", invoice.getId());
 
@@ -114,7 +130,8 @@ public class InvoiceDetectionService {
             log.warn("FRAUD DETECTED - Risk Level: {} (Score: {}) - Creating case for invoice: {}",
                     riskAssessment.riskLevel, riskAssessment.riskScore, invoice.getId());
 
-            CaseRecord c = new CaseRecord(UUID.randomUUID(), cmd.tenantId, invoice.getId(), CaseState.FLAGGED, OffsetDateTime.now());
+            CaseRecord c = new CaseRecord(UUID.randomUUID(), cmd.tenantId, invoice.getId(),
+                    CaseState.FLAGGED, OffsetDateTime.now());
             caseRepo.save(c);
             log.info("Case created with ID: {} for risk level: {}", c.getId(), riskAssessment.riskLevel);
 
