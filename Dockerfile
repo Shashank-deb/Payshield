@@ -9,7 +9,7 @@ WORKDIR /app
 # Copy POM first (better layer cache)
 COPY pom.xml .
 
-# (Optional) prime dependency cache by running a no-op resolve WITHOUT custom -s
+# Prime dependency cache
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -e -DskipTests \
       -Dmaven.wagon.http.retryHandler.count=5 \
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.m2 \
 # Copy sources
 COPY src ./src
 
-# Build jar (no -s)
+# Build jar
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -e -U -DskipTests \
       -Dmaven.wagon.http.retryHandler.count=5 \
@@ -31,13 +31,15 @@ RUN --mount=type=cache,target=/root/.m2 \
       package
 
 ############################
-# Runtime stage (non-root)
+# Runtime stage - FIXED PERMISSIONS
 ############################
 FROM eclipse-temurin:21-jre
 
+# Create user and directories with proper permissions
 RUN useradd -r -u 10001 -g root appuser \
- && mkdir -p /app /app/tmp \
- && chown -R appuser:root /app
+ && mkdir -p /app /app/tmp /app/logs /app/storage \
+ && chown -R appuser:root /app \
+ && chmod -R 775 /app
 
 WORKDIR /app
 ENV JAVA_OPTS=""
@@ -45,6 +47,15 @@ ENV JAVA_TOOL_OPTIONS=""
 
 COPY --from=build /app/target/*.jar /app/app.jar
 
+# Ensure the appuser owns the JAR and can write to directories
+RUN chown appuser:root /app/app.jar \
+ && chmod 755 /app/app.jar
+
 EXPOSE 2406
 USER appuser
+
+# Create storage directories at runtime with proper permissions
+RUN mkdir -p /app/tmp/storage /app/logs \
+ && chmod -R 755 /app/tmp /app/logs
+
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

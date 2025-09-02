@@ -24,6 +24,8 @@ public class InvoiceDetectionService {
     private final NotifierPort notifier;
     private final PdfParser parser;
     private final OutboxPort outbox;
+
+    // UPDATED: Use enhanced detection engine
     private final DetectionEngine engine = new DetectionEngine();
 
     public interface PdfParser { Parsed parse(Path storedPath); }
@@ -66,15 +68,30 @@ public class InvoiceDetectionService {
         String currency   = (cmd.currency != null && !cmd.currency.isBlank()) ? cmd.currency : parsed.currency;
         BigDecimal amount = (cmd.statedAmount != null) ? cmd.statedAmount : parsed.amount;
 
-        log.info("Final values - vendor: {}, currency: {}, amount: {}, bankLast4: {}",
-                vendorName, currency, amount, parsed.bankLast4);
+        log.info("Final values - vendor: {}, currency: {}, amount: {}, bankLast4: {}, fullIban: {}",
+                vendorName, currency, amount, parsed.bankLast4,
+                parsed.bankIban != null ? parsed.bankIban.substring(0, 4) + "****" : "null");
 
-        // Run fraud detection
-        log.info("Running fraud detection for vendor: {}, bankLast4: {}, senderDomain: {}",
-                vendorName, parsed.bankLast4, cmd.senderDomain.orElse("none"));
+        // ENHANCED: Run fraud detection with full invoice data
+        log.info("Running ENHANCED fraud detection with full invoice context...");
 
-        DetectionEngine.Result result = engine.evaluate(cmd.tenantId, vendorName, parsed.bankLast4, cmd.senderDomain, vendorRepo);
-        log.info("Fraud detection result: flagged={}, violations={}", result.flagged(), result.getViolations());
+        DetectionEngine.Result result = engine.evaluate(
+                cmd.tenantId,
+                vendorName,
+                parsed.bankLast4,
+                parsed.bankIban,           // Full IBAN for checksum validation
+                amount,                    // Amount for pattern analysis
+                currency,                  // Currency for analysis
+                cmd.senderDomain,
+                OffsetDateTime.now(),      // Submission timing
+                vendorRepo
+        );
+
+        // Get risk assessment
+        DetectionEngine.RiskAssessment riskAssessment = engine.assessRisk(result);
+
+        log.info("Enhanced fraud detection result: flagged={}, riskScore={}, riskLevel={}, violations={}",
+                result.flagged(), riskAssessment.riskScore, riskAssessment.riskLevel, result.getViolations());
 
         // Create or get vendor
         UUID vendorId = vendorRepo.findByName(cmd.tenantId, vendorName)
@@ -92,34 +109,104 @@ public class InvoiceDetectionService {
         invoiceRepo.save(invoice);
         log.info("Invoice saved with ID: {}", invoice.getId());
 
-        // Handle fraud detection results
+        // Handle fraud detection results with enhanced risk assessment
         if (result.flagged()) {
-            log.info("Creating case for flagged invoice: {}", invoice.getId());
+            log.warn("FRAUD DETECTED - Risk Level: {} (Score: {}) - Creating case for invoice: {}",
+                    riskAssessment.riskLevel, riskAssessment.riskScore, invoice.getId());
+
             CaseRecord c = new CaseRecord(UUID.randomUUID(), cmd.tenantId, invoice.getId(), CaseState.FLAGGED, OffsetDateTime.now());
             caseRepo.save(c);
-            log.info("Case created with ID: {}", c.getId());
+            log.info("Case created with ID: {} for risk level: {}", c.getId(), riskAssessment.riskLevel);
 
-            // Publish outbox event
-            String eventPayload = "{\"invoiceId\":\"" + invoice.getId() + "\",\"caseId\":\"" + c.getId() + "\"}";
+            // Enhanced outbox event with risk assessment
+            String eventPayload = createEnhancedEventPayload(invoice, c, riskAssessment, result);
             outbox.publish(cmd.tenantId, "invoice.flagged", eventPayload);
-            log.info("Outbox event published for case: {}", c.getId());
+            log.info("Enhanced outbox event published for case: {}", c.getId());
 
-            // Send notification - use HashMap to allow null values
-            Map<String, Object> notificationPayload = new HashMap<>();
-            notificationPayload.put("invoiceId", invoice.getId().toString());
-            notificationPayload.put("vendorName", vendorName != null ? vendorName : "unknown");
-            notificationPayload.put("rules", result.getViolations().toString());
-            notificationPayload.put("amount", amount != null ? amount.toString() : "unknown");
-            notificationPayload.put("currency", currency != null ? currency : "unknown");
+            // Enhanced notification with risk details
+            Map<String, Object> notificationPayload = createEnhancedNotificationPayload(
+                    invoice, vendorName, amount, currency, riskAssessment, result);
 
             notifier.sendCaseFlagged(cmd.tenantId, c.getId(), notificationPayload);
-            log.info("Notification sent for flagged case: {}", c.getId());
+            log.info("Enhanced fraud notification sent - Case: {}, Risk: {}, Score: {}",
+                    c.getId(), riskAssessment.riskLevel, riskAssessment.riskScore);
         } else {
-            log.info("Invoice not flagged, no case created");
+            log.info("Invoice approved - Risk score: {} below threshold (50)", riskAssessment.riskScore);
         }
 
-        log.info("Invoice upload and detection completed - invoiceId: {}", invoice.getId());
+        log.info("Invoice upload and detection completed - invoiceId: {}, riskScore: {}",
+                invoice.getId(), riskAssessment.riskScore);
         return new InvoiceDetectionResult(invoice.getId(), false);
+    }
+
+    /**
+     * Create enhanced event payload with risk assessment details
+     */
+    private String createEnhancedEventPayload(Invoice invoice, CaseRecord caseRecord,
+                                              DetectionEngine.RiskAssessment riskAssessment,
+                                              DetectionEngine.Result detectionResult) {
+        return String.format("""
+            {
+                "eventId": "%s",
+                "eventType": "invoice.flagged",
+                "timestamp": "%s",
+                "tenantId": "%s",
+                "invoiceId": "%s", 
+                "caseId": "%s",
+                "riskAssessment": {
+                    "score": %d,
+                    "level": "%s",
+                    "recommendation": "%s",
+                    "violations": %s
+                },
+                "invoice": {
+                    "amount": "%s",
+                    "currency": "%s",
+                    "vendorId": "%s"
+                }
+            }""",
+                UUID.randomUUID(),
+                OffsetDateTime.now(),
+                invoice.getTenantId(),
+                invoice.getId(),
+                caseRecord.getId(),
+                riskAssessment.riskScore,
+                riskAssessment.riskLevel,
+                riskAssessment.recommendation,
+                detectionResult.getViolations(),
+                invoice.getAmount(),
+                invoice.getCurrency(),
+                invoice.getVendorId()
+        );
+    }
+
+    /**
+     * Create enhanced notification payload for alerts
+     */
+    private Map<String, Object> createEnhancedNotificationPayload(Invoice invoice, String vendorName,
+                                                                  BigDecimal amount, String currency,
+                                                                  DetectionEngine.RiskAssessment riskAssessment,
+                                                                  DetectionEngine.Result detectionResult) {
+        Map<String, Object> payload = new HashMap<>();
+
+        // Basic invoice info
+        payload.put("invoiceId", invoice.getId().toString());
+        payload.put("vendorName", vendorName != null ? vendorName : "unknown");
+        payload.put("amount", amount != null ? amount.toString() : "unknown");
+        payload.put("currency", currency != null ? currency : "unknown");
+
+        // Enhanced risk information
+        payload.put("riskScore", riskAssessment.riskScore);
+        payload.put("riskLevel", riskAssessment.riskLevel);
+        payload.put("recommendation", riskAssessment.recommendation);
+        payload.put("violations", detectionResult.getViolations().toString());
+        payload.put("flaggedRules", new ArrayList<>(detectionResult.getViolations()));
+
+        // Additional context for alerts
+        payload.put("submissionTime", OffsetDateTime.now().toString());
+        payload.put("tenantId", invoice.getTenantId().toString());
+
+        return payload;
     }
 
     public record InvoiceDetectionResult(UUID id, boolean alreadyExists) {}
