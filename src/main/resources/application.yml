@@ -306,6 +306,12 @@ app:
   upload:
     strict-mime-check: true
     validate-content: true
+#  encryption:
+#    # Prefer file-based secret if provided, else inline key
+#    # Do not set real values here; they come from env or secrets
+#    algorithm: AES/GCM/NoPadding
+#    key: ${APP_ENCRYPTION_KEY:}
+#    key-file: ${APP_ENCRYPTION_KEY_FILE:}
 
 server:
   error:
