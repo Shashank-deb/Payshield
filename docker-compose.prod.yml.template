@@ -1,0 +1,195 @@
+# ==============================================================================
+# Production Docker Compose - SECURE CONFIGURATION
+# ==============================================================================
+# Copy this to docker-compose.prod.yml and configure for your environment
+# NEVER commit docker-compose.prod.yml to version control!
+# ==============================================================================
+
+services:
+  # PostgreSQL with production security
+  db:
+    image: postgres:16-alpine
+    container_name: payshield-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Security hardening
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+      # Custom PostgreSQL configuration for security
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: 
+      - "postgres"
+      - "-c"
+      - "config_file=/etc/postgresql/postgresql.conf"
+    networks:
+      - payshield_internal
+    # No external port exposure - internal network only
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # ClamAV with production configuration
+  clamav:
+    image: clamav/clamav:1.0.9
+    container_name: payshield-clamav-prod
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_FRESHCLAM: false
+      CLAMAV_NO_CLAMD: false
+    volumes:
+      - clamav_db_prod:/var/lib/clamav
+      - clamav_logs_prod:/var/log/clamav
+    networks:
+      - payshield_internal
+    # No external port exposure
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+
+  # Application with production security
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payshield-app-prod
+    restart: unless-stopped
+    environment:
+      # Production profile
+      SPRING_PROFILES_ACTIVE: production
+      
+      # Database
+      SPRING_DATASOURCE_URL: ${DB_URL}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      
+      # Security
+      SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET}
+      SECURITY_JWT_TTL_SECONDS: ${SECURITY_JWT_TTL_SECONDS}
+      
+      # Bootstrap admin
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      
+      # Production JVM settings
+      JAVA_OPTS: >-
+        -server
+        -XX:+UseG1GC
+        -XX:+UseStringDeduplication
+        -XX:MaxRAMPercentage=75.0
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/app/logs/
+        -Djava.security.egd=file:/dev/./urandom
+        -Dspring.jmx.enabled=false
+      
+      # Security headers
+      SECURITY_CONTENT_TYPE_OPTIONS: ${SECURITY_CONTENT_TYPE_OPTIONS}
+      SECURITY_FRAME_OPTIONS: ${SECURITY_FRAME_OPTIONS}
+      
+      # Disable development features
+      API_DOCS_ENABLED: false
+      SWAGGER_UI_ENABLED: false
+      DEBUG_ENDPOINTS_ENABLED: false
+      
+      # ClamAV
+      CLAMAV_ENABLED: true
+      CLAMAV_HOST: clamav
+      CLAMAV_FAIL_SECURE: true
+      
+      # Monitoring
+      LOG_LEVEL: WARN
+      SECURITY_LOG_LEVEL: INFO
+      
+    ports:
+      - "2406:2406"  # Only expose application port
+      # Actuator port 9090 is NOT exposed externally
+    
+    depends_on:
+      - db
+      - clamav
+    
+    networks:
+      - payshield_internal
+      - payshield_external
+    
+    volumes:
+      - app_storage_prod:/app/storage:rw
+      - app_logs_prod:/app/logs:rw
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Application needs to write logs and temp files
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+
+  # Nginx reverse proxy with SSL termination
+  nginx:
+    image: nginx:alpine
+    container_name: payshield-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - app_logs_prod:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - payshield_external
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+# Separate networks for security
+networks:
+  payshield_internal:
+    driver: bridge
+    internal: true  # No internet access
+  payshield_external:
+    driver: bridge
+
+# Named volumes for production
+volumes:
+  pgdata_prod:
+    driver: local
+  clamav_db_prod:
+    driver: local  
+  clamav_logs_prod:
+    driver: local
+  app_storage_prod:
+    driver: local
+  app_logs_prod:
+    driver: local
