@@ -1,5 +1,7 @@
 package com.payshield.frauddetector.application;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.payshield.frauddetector.domain.*;
 import com.payshield.frauddetector.domain.ports.*;
 import org.slf4j.Logger;
@@ -24,6 +26,7 @@ public class InvoiceDetectionService {
     private final NotifierPort notifier;
     private final PdfParser parser;
     private final OutboxPort outbox;
+    private final ObjectMapper objectMapper; // Add ObjectMapper for proper JSON serialization
 
     // Use enhanced detection engine
     private final DetectionEngine engine = new DetectionEngine();
@@ -47,7 +50,7 @@ public class InvoiceDetectionService {
 
     public InvoiceDetectionService(InvoiceRepository invoiceRepo, VendorHistoryRepository vendorRepo,
                                    CaseRepository caseRepo, FileStoragePort storage, NotifierPort notifier,
-                                   PdfParser parser, OutboxPort outbox) {
+                                   PdfParser parser, OutboxPort outbox, ObjectMapper objectMapper) {
         this.invoiceRepo = invoiceRepo;
         this.vendorRepo = vendorRepo;
         this.caseRepo = caseRepo;
@@ -55,6 +58,7 @@ public class InvoiceDetectionService {
         this.notifier = notifier;
         this.parser = parser;
         this.outbox = outbox;
+        this.objectMapper = objectMapper; // Initialize ObjectMapper
     }
 
     @Transactional
@@ -135,18 +139,28 @@ public class InvoiceDetectionService {
             caseRepo.save(c);
             log.info("Case created with ID: {} for risk level: {}", c.getId(), riskAssessment.riskLevel);
 
-            // Enhanced outbox event with risk assessment
-            String eventPayload = createEnhancedEventPayload(invoice, c, riskAssessment, result);
-            outbox.publish(cmd.tenantId, "invoice.flagged", eventPayload);
-            log.info("Enhanced outbox event published for case: {}", c.getId());
+            try {
+                // FIXED: Use proper JSON serialization with ObjectMapper
+                String eventPayload = createEnhancedEventPayload(invoice, c, riskAssessment, result);
+                outbox.publish(cmd.tenantId, "invoice.flagged", eventPayload);
+                log.info("Enhanced outbox event published for case: {}", c.getId());
+            } catch (Exception e) {
+                log.error("Failed to publish outbox event for case {}: {}", c.getId(), e.getMessage(), e);
+                // Don't fail the transaction - the core business logic succeeded
+            }
 
-            // Enhanced notification with risk details
-            Map<String, Object> notificationPayload = createEnhancedNotificationPayload(
-                    invoice, vendorName, amount, currency, riskAssessment, result);
+            try {
+                // Enhanced notification with risk details
+                Map<String, Object> notificationPayload = createEnhancedNotificationPayload(
+                        invoice, vendorName, amount, currency, riskAssessment, result);
 
-            notifier.sendCaseFlagged(cmd.tenantId, c.getId(), notificationPayload);
-            log.info("Enhanced fraud notification sent - Case: {}, Risk: {}, Score: {}",
-                    c.getId(), riskAssessment.riskLevel, riskAssessment.riskScore);
+                notifier.sendCaseFlagged(cmd.tenantId, c.getId(), notificationPayload);
+                log.info("Enhanced fraud notification sent - Case: {}, Risk: {}, Score: {}",
+                        c.getId(), riskAssessment.riskLevel, riskAssessment.riskScore);
+            } catch (Exception e) {
+                log.error("Failed to send notification for case {}: {}", c.getId(), e.getMessage(), e);
+                // Don't fail the transaction - notification is not critical
+            }
         } else {
             log.info("Invoice approved - Risk score: {} below threshold (50)", riskAssessment.riskScore);
         }
@@ -157,44 +171,49 @@ public class InvoiceDetectionService {
     }
 
     /**
-     * Create enhanced event payload with risk assessment details
+     * FIXED: Create enhanced event payload with proper JSON serialization
      */
     private String createEnhancedEventPayload(Invoice invoice, CaseRecord caseRecord,
                                               DetectionEngine.RiskAssessment riskAssessment,
                                               DetectionEngine.Result detectionResult) {
-        return String.format("""
-            {
-                "eventId": "%s",
-                "eventType": "invoice.flagged",
-                "timestamp": "%s",
-                "tenantId": "%s",
-                "invoiceId": "%s", 
-                "caseId": "%s",
-                "riskAssessment": {
-                    "score": %d,
-                    "level": "%s",
-                    "recommendation": "%s",
-                    "violations": %s
-                },
-                "invoice": {
-                    "amount": "%s",
-                    "currency": "%s",
-                    "vendorId": "%s"
-                }
-            }""",
-                UUID.randomUUID(),
-                OffsetDateTime.now(),
-                invoice.getTenantId(),
-                invoice.getId(),
-                caseRecord.getId(),
-                riskAssessment.riskScore,
-                riskAssessment.riskLevel,
-                riskAssessment.recommendation,
-                detectionResult.getViolations(),
-                invoice.getAmount(),
-                invoice.getCurrency(),
-                invoice.getVendorId()
-        );
+        try {
+            // Create a proper Map structure that can be serialized to JSON
+            Map<String, Object> eventData = new HashMap<>();
+            eventData.put("eventId", UUID.randomUUID().toString());
+            eventData.put("eventType", "invoice.flagged");
+            eventData.put("timestamp", OffsetDateTime.now().toString());
+            eventData.put("tenantId", invoice.getTenantId().toString());
+            eventData.put("invoiceId", invoice.getId().toString());
+            eventData.put("caseId", caseRecord.getId().toString());
+
+            // Risk assessment details
+            Map<String, Object> riskAssessmentMap = new HashMap<>();
+            riskAssessmentMap.put("score", riskAssessment.riskScore);
+            riskAssessmentMap.put("level", riskAssessment.riskLevel);
+            riskAssessmentMap.put("recommendation", riskAssessment.recommendation);
+
+            // FIXED: Convert enum Set to List of strings
+            List<String> violationStrings = detectionResult.getViolations().stream()
+                    .map(Enum::name)
+                    .toList();
+            riskAssessmentMap.put("violations", violationStrings);
+
+            eventData.put("riskAssessment", riskAssessmentMap);
+
+            // Invoice details
+            Map<String, Object> invoiceMap = new HashMap<>();
+            invoiceMap.put("amount", invoice.getAmount() != null ? invoice.getAmount().toString() : null);
+            invoiceMap.put("currency", invoice.getCurrency());
+            invoiceMap.put("vendorId", invoice.getVendorId().toString());
+            eventData.put("invoice", invoiceMap);
+
+            // Use ObjectMapper to create valid JSON
+            return objectMapper.writeValueAsString(eventData);
+
+        } catch (JsonProcessingException e) {
+            log.error("Failed to create JSON payload for outbox event: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to create outbox event payload", e);
+        }
     }
 
     /**
@@ -217,7 +236,12 @@ public class InvoiceDetectionService {
         payload.put("riskLevel", riskAssessment.riskLevel);
         payload.put("recommendation", riskAssessment.recommendation);
         payload.put("violations", detectionResult.getViolations().toString());
-        payload.put("flaggedRules", new ArrayList<>(detectionResult.getViolations()));
+
+        // Convert enums to strings for JSON serialization
+        List<String> flaggedRules = detectionResult.getViolations().stream()
+                .map(Enum::name)
+                .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
+        payload.put("flaggedRules", flaggedRules);
 
         // Additional context for alerts
         payload.put("submissionTime", OffsetDateTime.now().toString());

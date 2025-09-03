@@ -123,6 +123,14 @@ app:
     connection-timeout: ${CLAMAV_CONNECTION_TIMEOUT:5000}
     fail-secure: ${CLAMAV_FAIL_SECURE:false}
 
+  # Field-Level Encryption Configuration - Step 9
+  encryption:
+    key: ${PSP_AES_KEY}
+    algorithm: AES-256-GCM
+    key-version: 1
+    # For production: consider using key files or vault integration
+    # key-file: ${PSP_AES_KEY_FILE:/secrets/encryption.key}
+
 # Step 11: OpenAPI/Swagger Configuration
 springdoc:
   api-docs:

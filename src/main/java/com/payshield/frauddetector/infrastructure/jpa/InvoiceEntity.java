@@ -1,5 +1,4 @@
 package com.payshield.frauddetector.infrastructure.jpa;
-
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -42,6 +41,7 @@ public class InvoiceEntity {
     @Column(name = "file_sha256")
     private String fileSha256;
 
+    // Standard getters and setters
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
 
