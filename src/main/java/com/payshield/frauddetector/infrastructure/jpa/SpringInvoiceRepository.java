@@ -2,6 +2,7 @@ package com.payshield.frauddetector.infrastructure.jpa;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
@@ -26,5 +27,8 @@ public interface SpringInvoiceRepository extends JpaRepository<InvoiceEntity, UU
     // ➕ NEW: Migration verification methods
     long countByBankIbanIsNotNull();
     long countByBankSwiftIsNotNull();
+
+    // ➕ FIXED: Use proper query for encrypted fields count
+    @Query("SELECT COUNT(i) FROM InvoiceEntity i WHERE i.bankIbanEncrypted IS NOT NULL OR i.bankSwiftEncrypted IS NOT NULL")
     long countByBankIbanEncryptedIsNotNullOrBankSwiftEncryptedIsNotNull();
 }
