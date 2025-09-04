@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -19,8 +20,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
 
-
 @Configuration
+@EnableMethodSecurity(prePostEnabled = true) // ✅ Enable @PreAuthorize annotations
 public class SecurityConfig {
 
   private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
@@ -69,7 +70,7 @@ public class SecurityConfig {
 
   @Bean
   SecurityFilterChain security(HttpSecurity http, JwtService jwtService) throws Exception {
-    log.info("Configuring security filter chain");
+    log.info("Configuring security filter chain with encryption admin endpoints");
 
     JwtAuthFilter jwtFilter = new JwtAuthFilter(jwtService);
 
@@ -85,7 +86,7 @@ public class SecurityConfig {
 
             // Configure request matchers
             .authorizeHttpRequests(auth -> {
-              log.info("Configuring authorization rules");
+              log.info("Configuring authorization rules with admin encryption endpoints");
               auth
                       // Public endpoints - no authentication required
                       .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Allow all preflight requests
@@ -94,9 +95,10 @@ public class SecurityConfig {
                       .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                       .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus").permitAll()
 
-                      // Admin-only endpoints
+                      // ✅ Admin-only endpoints (UPDATED)
                       .requestMatchers("/actuator/**").hasRole("ADMIN")
                       .requestMatchers("/outbox/**").hasRole("ADMIN") // Outbox testing endpoints for admins only
+                      .requestMatchers("/admin/**").hasRole("ADMIN") // ✅ NEW: Admin encryption endpoints
 
                       // Invoice endpoints - analysts and admins can upload, all roles can view
                       .requestMatchers(HttpMethod.POST, "/invoices/upload").hasAnyRole("ANALYST", "ADMIN")
@@ -106,6 +108,9 @@ public class SecurityConfig {
                       .requestMatchers(HttpMethod.POST, "/cases/*/approve").hasAnyRole("APPROVER", "ADMIN")
                       .requestMatchers(HttpMethod.POST, "/cases/*/reject").hasAnyRole("APPROVER", "ADMIN")
                       .requestMatchers("/cases/**").hasAnyRole("APPROVER", "ADMIN")
+
+                      // ✅ Fraud detection testing endpoints - available to analysts and admins
+                      .requestMatchers("/fraud/**").hasAnyRole("ANALYST", "ADMIN")
 
                       // All other requests require authentication
                       .anyRequest().authenticated();
@@ -120,7 +125,7 @@ public class SecurityConfig {
                     .accessDeniedHandler(json403())
             );
 
-    log.info("Security filter chain configured successfully");
+    log.info("Security filter chain configured successfully with encryption admin support");
     return http.build();
   }
 

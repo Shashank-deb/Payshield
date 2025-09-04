@@ -11,10 +11,20 @@ public interface SpringInvoiceRepository extends JpaRepository<InvoiceEntity, UU
 
     Boolean existsByTenantIdAndFileSha256(UUID tenantId, String sha256);
 
-    // ➕ Add this line so adapter can resolve it
     Optional<InvoiceEntity> findByTenantIdAndFileSha256(UUID tenantId, String sha256);
 
     Optional<InvoiceEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 
     List<InvoiceEntity> findByTenantId(UUID tenantId, Pageable pageable);
+
+    // ➕ NEW: Find by IBAN hash for duplicate detection
+    Optional<InvoiceEntity> findByTenantIdAndBankIbanHash(UUID tenantId, String ibanHash);
+
+    // ➕ NEW: Check if IBAN hash exists for duplicate prevention
+    Boolean existsByTenantIdAndBankIbanHash(UUID tenantId, String ibanHash);
+
+    // ➕ NEW: Migration verification methods
+    long countByBankIbanIsNotNull();
+    long countByBankSwiftIsNotNull();
+    long countByBankIbanEncryptedIsNotNullOrBankSwiftEncryptedIsNotNull();
 }

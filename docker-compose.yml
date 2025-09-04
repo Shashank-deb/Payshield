@@ -79,6 +79,11 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
       BOOTSTRAP_DEFAULT_TENANT_ID: ${BOOTSTRAP_DEFAULT_TENANT_ID}
 
+      # ✅ CRITICAL FIX: Encryption Key Environment Variables
+      PSP_AES_KEY: ${PSP_AES_KEY}
+      APP_ENCRYPTION_KEY: ${PSP_AES_KEY}  # Alternative mapping
+
+
       # Management/Actuator
       MANAGEMENT_SERVER_PORT: ${ACTUATOR_PORT}
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: "health,info,prometheus"
