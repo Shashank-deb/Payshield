@@ -1,7 +1,13 @@
+// ==============================================================================
+// STEP 1B: Update ONLY the constructor and field injection
+// File: src/main/java/com/payshield/frauddetector/infrastructure/adapters/JpaInvoiceRepositoryAdapter.java
+// ==============================================================================
+
 package com.payshield.frauddetector.infrastructure.adapters;
 
 import com.payshield.frauddetector.domain.Invoice;
 import com.payshield.frauddetector.domain.ports.InvoiceRepository;
+import com.payshield.frauddetector.infrastructure.encryption.FieldEncryptionService; // ✅ ADD THIS IMPORT
 import com.payshield.frauddetector.infrastructure.jpa.InvoiceEntity;
 import com.payshield.frauddetector.infrastructure.jpa.SpringInvoiceRepository;
 import org.slf4j.Logger;
@@ -18,17 +24,21 @@ public class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
 
     private static final Logger log = LoggerFactory.getLogger(JpaInvoiceRepositoryAdapter.class);
     private final SpringInvoiceRepository invoices;
+    private final FieldEncryptionService encryptionService; // ✅ ADD THIS FIELD
 
-    // TEMPORARY: Remove encryption dependency to get app running
-    public JpaInvoiceRepositoryAdapter(SpringInvoiceRepository invoices) {
+    // ✅ UPDATE CONSTRUCTOR - Add FieldEncryptionService parameter
+    public JpaInvoiceRepositoryAdapter(SpringInvoiceRepository invoices,
+                                       FieldEncryptionService encryptionService) {
         this.invoices = invoices;
-        log.info("Invoice repository initialized (encryption temporarily disabled)");
+        this.encryptionService = encryptionService; // ✅ ADD THIS LINE
+        log.info("Invoice repository initialized with encryption service");
     }
 
+    // 🔄 KEEP ALL OTHER METHODS UNCHANGED FOR NOW
     @Override
     public Invoice save(Invoice invoice) {
-        log.debug("Saving invoice: {}", invoice.getId());
-        
+        log.debug("Saving invoice with encryption: {}", invoice.getId());
+
         InvoiceEntity e = new InvoiceEntity();
         e.setId(invoice.getId());
         e.setTenantId(invoice.getTenantId());
@@ -36,18 +46,40 @@ public class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
         e.setAmount(invoice.getAmount());
         e.setCurrency(invoice.getCurrency());
         e.setReceivedAt(invoice.getReceivedAt());
-        
-        // TEMPORARY: Store as plaintext until encryption is properly configured
-        e.setBankIban(invoice.getBankIban());
-        e.setBankSwift(invoice.getBankSwift());
-        e.setBankLast4(invoice.getBankLast4());
-        
+
+        // ✅ NEW: Encrypt sensitive banking data
+        try {
+            if (invoice.getBankIban() != null && !invoice.getBankIban().isBlank()) {
+                log.debug("Encrypting IBAN for invoice: {}", invoice.getId());
+                e.setBankIbanEncrypted(encryptionService.encrypt(invoice.getBankIban()));
+                e.setBankIbanHash(encryptionService.generateHash(invoice.getBankIban()));
+                // Clear the plaintext field (for new records)
+                e.setBankIban(null);
+            }
+
+            if (invoice.getBankSwift() != null && !invoice.getBankSwift().isBlank()) {
+                log.debug("Encrypting SWIFT for invoice: {}", invoice.getId());
+                e.setBankSwiftEncrypted(encryptionService.encrypt(invoice.getBankSwift()));
+                // Clear the plaintext field (for new records)
+                e.setBankSwift(null);
+            }
+
+            // Bank last 4 can remain plaintext for searching/display
+            e.setBankLast4(invoice.getBankLast4());
+
+            log.info("✅ Successfully encrypted sensitive data for invoice: {}", invoice.getId());
+
+        } catch (Exception encryptionEx) {
+            log.error("❌ Encryption failed for invoice {}: {}", invoice.getId(), encryptionEx.getMessage());
+            throw new RuntimeException("Failed to encrypt sensitive data", encryptionEx);
+        }
+
         e.setSourceMessageId(invoice.getSourceMessageId());
         e.setFileSha256(invoice.getFileSha256());
 
         try {
             invoices.save(e);
-            log.debug("Invoice saved successfully: {}", invoice.getId());
+            log.debug("Invoice saved successfully with encrypted data: {}", invoice.getId());
             return invoice;
         } catch (Exception ex) {
             log.error("Failed to save invoice {}: {}", invoice.getId(), ex.getMessage());
@@ -55,6 +87,7 @@ public class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
         }
     }
 
+    // 🔄 KEEP ALL OTHER METHODS EXACTLY THE SAME
     @Override
     public Optional<Invoice> findById(UUID tenantId, UUID invoiceId) {
         return invoices.findByTenantIdAndId(tenantId, invoiceId)
@@ -81,17 +114,52 @@ public class JpaInvoiceRepositoryAdapter implements InvoiceRepository {
     }
 
     private Invoice entityToDomain(InvoiceEntity e) {
+        log.debug("Converting entity to domain with decryption for invoice: {}", e.getId());
+
+        String bankIban = null;
+        String bankSwift = null;
+
+        try {
+            // ✅ NEW: Try encrypted fields first, fallback to legacy plaintext
+            if (e.getBankIbanEncrypted() != null && !e.getBankIbanEncrypted().isBlank()) {
+                log.debug("Decrypting IBAN for invoice: {}", e.getId());
+                bankIban = encryptionService.decrypt(e.getBankIbanEncrypted());
+            } else if (e.getBankIban() != null && !e.getBankIban().isBlank()) {
+                log.debug("Using legacy plaintext IBAN for invoice: {}", e.getId());
+                bankIban = e.getBankIban(); // Legacy plaintext fallback
+            }
+
+            if (e.getBankSwiftEncrypted() != null && !e.getBankSwiftEncrypted().isBlank()) {
+                log.debug("Decrypting SWIFT for invoice: {}", e.getId());
+                bankSwift = encryptionService.decrypt(e.getBankSwiftEncrypted());
+            } else if (e.getBankSwift() != null && !e.getBankSwift().isBlank()) {
+                log.debug("Using legacy plaintext SWIFT for invoice: {}", e.getId());
+                bankSwift = e.getBankSwift(); // Legacy plaintext fallback
+            }
+
+            if (bankIban != null || bankSwift != null) {
+                log.debug("✅ Successfully decrypted banking data for invoice: {}", e.getId());
+            }
+
+        } catch (Exception decryptionEx) {
+            log.error("❌ Decryption failed for invoice {}: {}", e.getId(), decryptionEx.getMessage());
+            // Don't fail the entire operation - return null for banking fields
+            log.warn("Continuing with null banking data due to decryption failure");
+            bankIban = null;
+            bankSwift = null;
+        }
+
         return new Invoice(
-                e.getId(), 
-                e.getTenantId(), 
-                e.getVendorId(), 
-                e.getReceivedAt(), 
-                e.getAmount(), 
+                e.getId(),
+                e.getTenantId(),
+                e.getVendorId(),
+                e.getReceivedAt(),
+                e.getAmount(),
                 e.getCurrency(),
-                e.getBankIban(),    // Plaintext for now
-                e.getBankSwift(),   // Plaintext for now
-                e.getBankLast4(), 
-                e.getSourceMessageId(), 
+                bankIban,           // ✅ Decrypted IBAN
+                bankSwift,          // ✅ Decrypted SWIFT
+                e.getBankLast4(),   // Plaintext (safe to display)
+                e.getSourceMessageId(),
                 e.getFileSha256()
         );
     }
