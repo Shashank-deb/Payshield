@@ -130,6 +130,61 @@ app:
     key-version: 1
     # For production: consider using key files or vault integration
     # key-file: ${PSP_AES_KEY_FILE:/secrets/encryption.key}
+      # ==========================================================================
+      # 🔐 NEW: MULTI-FACTOR AUTHENTICATION (MFA) CONFIGURATION
+      # ADD THIS ENTIRE SECTION TO YOUR EXISTING application.yml
+      # ==========================================================================
+    mfa:
+        # TOTP Configuration
+        totp:
+          issuer-name: ${MFA_ISSUER_NAME:PayShield}
+          algorithm: ${MFA_ALGORITHM:HmacSHA1} # HmacSHA1, HmacSHA256, HmacSHA512
+          digits: ${MFA_DIGITS:6} # 6 or 8 digit codes
+          period-seconds: ${MFA_PERIOD_SECONDS:30} # Time window for TOTP
+          window-size: ${MFA_WINDOW_SIZE:1} # Allow codes from previous/next time window
+
+        # Secret Generation
+        secrets:
+          secret-length: ${MFA_SECRET_LENGTH:32} # Bytes for TOTP secret
+
+        # QR Code Generation
+        qr-code:
+          width: ${MFA_QR_WIDTH:300}
+          height: ${MFA_QR_HEIGHT:300}
+
+        # Backup Codes
+        backup-codes:
+          count: ${MFA_BACKUP_CODES_COUNT:10}
+          length: ${MFA_BACKUP_CODE_LENGTH:8}
+
+        # Rate Limiting & Security
+        rate-limiting:
+          max-attempts: ${MFA_MAX_ATTEMPTS:5}
+          window-minutes: ${MFA_RATE_WINDOW_MINUTES:15}
+          lockout-duration-minutes: ${MFA_LOCKOUT_DURATION_MINUTES:60}
+
+        # Trusted Devices
+        trusted-devices:
+          enabled: ${MFA_TRUSTED_DEVICES_ENABLED:true}
+          expiry-days: ${MFA_TRUSTED_DEVICE_EXPIRY_DAYS:30}
+          max-devices-per-user: ${MFA_MAX_TRUSTED_DEVICES:5}
+
+        # Geolocation & Device Fingerprinting
+        security:
+          enable-location-tracking: ${MFA_ENABLE_LOCATION_TRACKING:true}
+          enable-device-fingerprinting: ${MFA_ENABLE_DEVICE_FINGERPRINTING:true}
+          suspicious-location-threshold-km: ${MFA_SUSPICIOUS_LOCATION_THRESHOLD:500}
+
+        # Cache Configuration for MFA
+        cache:
+          failed-attempts-ttl-minutes: ${MFA_CACHE_FAILED_ATTEMPTS_TTL:60}
+          device-fingerprint-ttl-hours: ${MFA_CACHE_DEVICE_FINGERPRINT_TTL:24}
+
+        # Notifications
+        notifications:
+          notify-on-new-device: ${MFA_NOTIFY_NEW_DEVICE:true}
+          notify-on-suspicious-login: ${MFA_NOTIFY_SUSPICIOUS_LOGIN:true}
+          notify-on-backup-code-usage: ${MFA_NOTIFY_BACKUP_CODE_USAGE:true}
 
 # Step 11: OpenAPI/Swagger Configuration
 springdoc:
@@ -392,3 +447,5 @@ logging:
     com.payshield.frauddetector: INFO
     org.apache.tika: ERROR
     org.springframework: WARN
+
+
