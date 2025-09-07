@@ -1,6 +1,6 @@
 // ==============================================================================
-// Enhanced AuthController with Complete MFA Integration
-// File: src/main/java/com/payshield/frauddetector/api/AuthController.java (REPLACE EXISTING)
+// COMPLETE: AuthController.java - Full File with MFA Integration
+// File: src/main/java/com/payshield/frauddetector/api/AuthController.java
 // ==============================================================================
 
 package com.payshield.frauddetector.api;
@@ -403,6 +403,9 @@ public class AuthController {
             if (mfaConfig.isPresent()) {
                 mfaEnabled = mfaConfig.get().isSetupComplete();
                 mfaStatus = mfaConfig.get().getStatus().name();
+            } else {
+                // FIXED: Use the correct method name
+                mfaEnabled = user.getMfaEnabled(); // This now works with the updated UserEntity
             }
         }
 
@@ -474,7 +477,7 @@ public class AuthController {
         userInfo.put("email", user.getEmail());
         userInfo.put("roles", user.getRoles());
         userInfo.put("tenantId", user.getTenantId().toString());
-        userInfo.put("mfaEnabled", user.getMfaEnabled());
+        userInfo.put("mfaEnabled", user.getMfaEnabled()); // FIXED: Now works with updated UserEntity
 
         response.put("user", userInfo);
 

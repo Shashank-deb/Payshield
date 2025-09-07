@@ -1,3 +1,8 @@
+// ==============================================================================
+// COMPLETE: UserEntity.java - Full File with MFA Support
+// File: src/main/java/com/payshield/frauddetector/infrastructure/jpa/UserEntity.java
+// ==============================================================================
+
 package com.payshield.frauddetector.infrastructure.jpa;
 
 import jakarta.persistence.*;
@@ -30,11 +35,31 @@ public class UserEntity {
     @Column(name = "role", nullable = false, length = 32)
     private Set<String> roles = new HashSet<>();
 
+    // ===============================================================================
+    // MFA-RELATED FIELDS (Added from V6 migration)
+    // ===============================================================================
+
+    @Column(name = "mfa_enabled", nullable = false)
+    private Boolean mfaEnabled = false;
+
+    @Column(name = "mfa_enforced", nullable = false)
+    private Boolean mfaEnforced = false;
+
+    @Column(name = "last_mfa_setup_at")
+    private OffsetDateTime lastMfaSetupAt;
+
+    @Column(name = "mfa_backup_codes_count", nullable = false)
+    private Integer mfaBackupCodesCount = 0;
+
+    // ===============================================================================
+    // STANDARD GETTERS AND SETTERS
+    // ===============================================================================
+
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
 
     public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email == null? null : email.toLowerCase(); }
+    public void setEmail(String email) { this.email = email == null ? null : email.toLowerCase(); }
 
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
@@ -47,4 +72,85 @@ public class UserEntity {
 
     public Set<String> getRoles() { return roles; }
     public void setRoles(Set<String> roles) { this.roles = roles; }
+
+    // ===============================================================================
+    // MFA-RELATED GETTERS AND SETTERS (FIXED)
+    // ===============================================================================
+
+    public Boolean getMfaEnabled() {
+        return mfaEnabled != null ? mfaEnabled : false;
+    }
+
+    public void setMfaEnabled(Boolean mfaEnabled) {
+        this.mfaEnabled = mfaEnabled != null ? mfaEnabled : false;
+    }
+
+    public Boolean getMfaEnforced() {
+        return mfaEnforced != null ? mfaEnforced : false;
+    }
+
+    public void setMfaEnforced(Boolean mfaEnforced) {
+        this.mfaEnforced = mfaEnforced != null ? mfaEnforced : false;
+    }
+
+    public OffsetDateTime getLastMfaSetupAt() {
+        return lastMfaSetupAt;
+    }
+
+    public void setLastMfaSetupAt(OffsetDateTime lastMfaSetupAt) {
+        this.lastMfaSetupAt = lastMfaSetupAt;
+    }
+
+    public Integer getMfaBackupCodesCount() {
+        return mfaBackupCodesCount != null ? mfaBackupCodesCount : 0;
+    }
+
+    public void setMfaBackupCodesCount(Integer mfaBackupCodesCount) {
+        this.mfaBackupCodesCount = mfaBackupCodesCount != null ? mfaBackupCodesCount : 0;
+    }
+
+    // ===============================================================================
+    // CONVENIENCE METHODS FOR MFA
+    // ===============================================================================
+
+    /**
+     * Check if MFA is enabled and properly configured for this user
+     */
+    public boolean isMfaEnabled() {
+        return getMfaEnabled();
+    }
+
+    /**
+     * Check if MFA is enforced for this user (admin required)
+     */
+    public boolean isMfaEnforced() {
+        return getMfaEnforced();
+    }
+
+    /**
+     * Check if user has any admin-related roles that might require MFA
+     */
+    public boolean hasAdminRole() {
+        return roles != null && (roles.contains("ADMIN") || roles.contains("ROLE_ADMIN"));
+    }
+
+    /**
+     * Check if MFA setup is required for this user
+     */
+    public boolean requiresMfaSetup() {
+        return isMfaEnforced() || (hasAdminRole() && !isMfaEnabled());
+    }
+
+    @Override
+    public String toString() {
+        return "UserEntity{" +
+                "id=" + id +
+                ", email='" + email + '\'' +
+                ", tenantId=" + tenantId +
+                ", mfaEnabled=" + mfaEnabled +
+                ", mfaEnforced=" + mfaEnforced +
+                ", roles=" + roles +
+                ", createdAt=" + createdAt +
+                '}';
+    }
 }

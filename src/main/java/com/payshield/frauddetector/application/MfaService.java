@@ -1,5 +1,5 @@
 // ==============================================================================
-// MFA Service - Complete Multi-Factor Authentication Business Logic
+// COMPLETE: MfaService.java - Full File with Fixed UserEntity Methods
 // File: src/main/java/com/payshield/frauddetector/application/MfaService.java
 // ==============================================================================
 
@@ -554,16 +554,24 @@ public class MfaService {
         }
     }
 
+    /**
+     * FIXED: Update user's MFA status in the users table
+     */
     private void updateUserMfaStatus(UUID userId, boolean enabled) {
         try {
             Optional<UserEntity> user = userRepository.findById(userId);
             if (user.isPresent()) {
                 UserEntity userEntity = user.get();
+                // FIXED: Use the correct setter method from the updated UserEntity
                 userEntity.setMfaEnabled(enabled);
                 if (enabled) {
                     userEntity.setLastMfaSetupAt(OffsetDateTime.now());
                 }
                 userRepository.save(userEntity);
+
+                log.debug("Updated MFA status for user {} to: {}", userId, enabled);
+            } else {
+                log.warn("User not found when updating MFA status: {}", userId);
             }
         } catch (Exception e) {
             log.error("Error updating user MFA status for user {}: {}", userId, e.getMessage(), e);
