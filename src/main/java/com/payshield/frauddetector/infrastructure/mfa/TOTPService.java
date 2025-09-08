@@ -1,5 +1,5 @@
 // ==============================================================================
-// Fixed TOTP Service - Using Available TOTP Libraries
+// FIXED: TOTPService.java - Corrected TOTP Verification Logic
 // File: src/main/java/com/payshield/frauddetector/infrastructure/mfa/TOTPService.java
 // ==============================================================================
 
@@ -16,8 +16,6 @@ import com.warrenstrange.googleauth.HmacHashFunction;
 import dev.samstevens.totp.code.*;
 import dev.samstevens.totp.qr.QrData;
 import dev.samstevens.totp.qr.QrDataFactory;
-import dev.samstevens.totp.qr.QrGenerator;
-import dev.samstevens.totp.qr.ZxingPngQrGenerator;
 import dev.samstevens.totp.secret.DefaultSecretGenerator;
 import dev.samstevens.totp.secret.SecretGenerator;
 import dev.samstevens.totp.time.SystemTimeProvider;
@@ -55,6 +53,9 @@ public class TOTPService {
     private final CodeGenerator codeGenerator;
     private final CodeVerifier codeVerifier;
 
+    // ✅ FIXED: Add Google Authenticator as primary verifier
+    private final GoogleAuthenticator googleAuth;
+
     public TOTPService(
             @Value("${app.mfa.totp.issuer-name:PayShield}") String issuerName,
             @Value("${app.mfa.totp.digits:6}") int digits,
@@ -87,9 +88,18 @@ public class TOTPService {
         // Initialize code generator with proper parameters
         this.codeGenerator = new DefaultCodeGenerator(algorithm, digits);
 
-        // Initialize code verifier - it takes CodeGenerator and TimeProvider
-        // The window size is handled differently
+        // Initialize code verifier
         this.codeVerifier = new DefaultCodeVerifier(codeGenerator, timeProvider);
+
+        // ✅ FIXED: Initialize Google Authenticator with proper config
+        GoogleAuthenticatorConfig config = new GoogleAuthenticatorConfig.GoogleAuthenticatorConfigBuilder()
+                .setTimeStepSizeInMillis(TimeUnit.SECONDS.toMillis(periodSeconds))
+                .setWindowSize(windowSize)
+                .setCodeDigits(digits)
+                .setHmacHashFunction(HmacHashFunction.HmacSHA1)
+                .build();
+
+        this.googleAuth = new GoogleAuthenticator(config);
 
         log.info("✅ TOTP Service initialized - Issuer: {}, Digits: {}, Period: {}s, Window: {}",
                 issuerName, digits, periodSeconds, windowSize);
@@ -152,33 +162,114 @@ public class TOTPService {
     }
 
     /**
-     * Verify TOTP code with time window tolerance
+     * ✅ FIXED: Primary TOTP verification method using Google Authenticator library
      */
     public boolean verifyCode(String secret, String providedCode) {
         try {
-            if (secret == null || providedCode == null) {
+            if (secret == null || secret.isBlank() || providedCode == null || providedCode.isBlank()) {
+                log.debug("TOTP verification failed - null or empty secret/code");
                 return false;
             }
 
-            // The verifier uses the configured time period automatically
-            // We need to verify within our window size
-            long currentTime = timeProvider.getTime() / 1000; // Convert to seconds
-            long currentCounter = currentTime / periodSeconds;
+            // ✅ FIXED: Clean and validate the provided code
+            String cleanCode = providedCode.trim();
+            if (!cleanCode.matches("^[0-9]{6}$")) {
+                log.debug("TOTP verification failed - invalid code format: '{}'", cleanCode);
+                return false;
+            }
 
-            // Check the current time slot and window size slots before/after
+            int code;
+            try {
+                code = Integer.parseInt(cleanCode);
+            } catch (NumberFormatException e) {
+                log.debug("TOTP verification failed - could not parse code: '{}'", cleanCode);
+                return false;
+            }
+
+            // ✅ FIXED: Use Google Authenticator for verification (most reliable)
+            boolean isValid = googleAuth.authorize(secret, code);
+
+            if (isValid) {
+                log.debug("✅ TOTP code verified successfully using Google Authenticator");
+            } else {
+                log.debug("❌ TOTP code verification failed using Google Authenticator");
+
+                // ✅ ADDED: Debug information for troubleshooting
+                String currentCode = getCurrentCode(secret);
+                long timeRemaining = getTimeUntilNextCode();
+                log.debug("Debug info - Current expected code: {}, Time until next: {}s",
+                        currentCode, timeRemaining);
+            }
+
+            return isValid;
+        } catch (Exception e) {
+            log.error("Error during TOTP verification: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ FIXED: Alternative verification method with detailed logging
+     */
+    public boolean verifyCodeWithDebug(String secret, String providedCode) {
+        try {
+            log.info("🔍 Starting TOTP verification with debug info");
+            log.info("Secret length: {}, Provided code: '{}'",
+                    secret != null ? secret.length() : 0, providedCode);
+
+            if (secret == null || secret.isBlank() || providedCode == null || providedCode.isBlank()) {
+                log.warn("❌ TOTP verification failed - null or empty parameters");
+                return false;
+            }
+
+            // Clean the code
+            String cleanCode = providedCode.trim();
+            if (!cleanCode.matches("^[0-9]{6}$")) {
+                log.warn("❌ TOTP verification failed - invalid format: '{}'", cleanCode);
+                return false;
+            }
+
+            // Get current time info
+            long currentTimeSeconds = System.currentTimeMillis() / 1000;
+            long currentTimeSlot = currentTimeSeconds / periodSeconds;
+            long timeInCurrentSlot = currentTimeSeconds % periodSeconds;
+            long timeUntilNext = periodSeconds - timeInCurrentSlot;
+
+            log.info("🕒 Time info - Current slot: {}, Time in slot: {}s, Until next: {}s",
+                    currentTimeSlot, timeInCurrentSlot, timeUntilNext);
+
+            // Generate expected codes for current and adjacent time slots
+            List<String> expectedCodes = new ArrayList<>();
             for (int i = -windowSize; i <= windowSize; i++) {
-                long counter = currentCounter + i;
-                String expectedCode = codeGenerator.generate(secret, counter);
-                if (expectedCode.equals(providedCode)) {
-                    log.debug("TOTP code verified successfully");
-                    return true;
+                try {
+                    long timeSlot = currentTimeSlot + i;
+                    String expectedCode = codeGenerator.generate(secret, timeSlot);
+                    expectedCodes.add(expectedCode);
+                    log.debug("Expected code for slot {} ({}): {}",
+                            timeSlot, i == 0 ? "current" : (i > 0 ? "future" : "past"), expectedCode);
+                } catch (Exception e) {
+                    log.error("Error generating code for time slot offset {}: {}", i, e.getMessage());
                 }
             }
 
-            log.debug("TOTP code verification failed");
-            return false;
+            // Check if provided code matches any expected code
+            boolean isValid = expectedCodes.contains(cleanCode);
+
+            if (isValid) {
+                log.info("✅ TOTP verification successful - code matches expected");
+            } else {
+                log.warn("❌ TOTP verification failed - code '{}' doesn't match any expected codes: {}",
+                        cleanCode, expectedCodes);
+            }
+
+            // Double-check with Google Authenticator
+            boolean googleAuthResult = googleAuth.authorize(secret, Integer.parseInt(cleanCode));
+            log.info("🔍 Google Authenticator result: {}", googleAuthResult);
+
+            return isValid || googleAuthResult;
+
         } catch (Exception e) {
-            log.error("Error during TOTP verification: {}", e.getMessage(), e);
+            log.error("❌ Error during debug TOTP verification: {}", e.getMessage(), e);
             return false;
         }
     }
@@ -213,11 +304,11 @@ public class TOTPService {
     }
 
     /**
-     * Get current TOTP code for testing/display purposes
+     * ✅ FIXED: Get current TOTP code for testing/display purposes
      */
     public String getCurrentCode(String secret) {
         try {
-            long currentTime = timeProvider.getTime() / 1000; // Convert to seconds
+            long currentTime = System.currentTimeMillis() / 1000; // Convert to seconds
             long currentTimeSlot = currentTime / periodSeconds;
             return codeGenerator.generate(secret, currentTimeSlot);
         } catch (Exception e) {
@@ -230,7 +321,7 @@ public class TOTPService {
      * Get time remaining until next TOTP code
      */
     public long getTimeUntilNextCode() {
-        long currentTime = timeProvider.getTime() / 1000; // Convert to seconds
+        long currentTime = System.currentTimeMillis() / 1000; // Convert to seconds
         long timeInCurrentStep = currentTime % periodSeconds;
         return periodSeconds - timeInCurrentStep;
     }
@@ -281,37 +372,22 @@ public class TOTPService {
     }
 
     /**
-     * Alternative implementation using Google Authenticator library for validation
+     * ✅ ADDED: Test method to verify setup
      */
-    public boolean verifyCodeWithGoogleAuth(String secret, String providedCode) {
+    public boolean testTotpSetup(String secret, String email) {
         try {
-            GoogleAuthenticatorConfig config = new GoogleAuthenticatorConfig.GoogleAuthenticatorConfigBuilder()
-                    .setTimeStepSizeInMillis(TimeUnit.SECONDS.toMillis(periodSeconds))
-                    .setWindowSize(windowSize)
-                    .setCodeDigits(digits)
-                    .setHmacHashFunction(HmacHashFunction.HmacSHA1)
-                    .build();
+            log.info("🧪 Testing TOTP setup for user: {}", email);
 
-            GoogleAuthenticator gAuth = new GoogleAuthenticator(config);
+            // Generate current code and verify it
+            String currentCode = getCurrentCode(secret);
+            log.info("Generated test code: {}", currentCode);
 
-            int code;
-            try {
-                code = Integer.parseInt(providedCode);
-            } catch (NumberFormatException e) {
-                return false;
-            }
+            boolean verificationResult = verifyCode(secret, currentCode);
+            log.info("Verification result: {}", verificationResult);
 
-            boolean isValid = gAuth.authorize(secret, code);
-
-            if (isValid) {
-                log.debug("TOTP code verified successfully using Google Authenticator library");
-            } else {
-                log.debug("TOTP code verification failed using Google Authenticator library");
-            }
-
-            return isValid;
+            return verificationResult;
         } catch (Exception e) {
-            log.error("Error during Google Auth TOTP verification: {}", e.getMessage(), e);
+            log.error("TOTP setup test failed: {}", e.getMessage(), e);
             return false;
         }
     }

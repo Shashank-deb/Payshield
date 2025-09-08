@@ -1,5 +1,5 @@
 // ==============================================================================
-// COMPLETE: MfaService.java - Full File with Fixed UserEntity Methods
+// COMPLETE FIXED: MfaService.java - Corrected MFA Verification Flow
 // File: src/main/java/com/payshield/frauddetector/application/MfaService.java
 // ==============================================================================
 
@@ -8,6 +8,7 @@ package com.payshield.frauddetector.application;
 import com.payshield.frauddetector.domain.mfa.MfaConfiguration;
 import com.payshield.frauddetector.domain.mfa.MfaStatus;
 import com.payshield.frauddetector.domain.mfa.TrustedDevice;
+import com.payshield.frauddetector.exception.MfaAlreadyConfiguredException;
 import com.payshield.frauddetector.infrastructure.encryption.FieldEncryptionService;
 import com.payshield.frauddetector.infrastructure.jpa.*;
 import com.payshield.frauddetector.infrastructure.mfa.TOTPService;
@@ -77,7 +78,7 @@ public class MfaService {
      */
     @Transactional
     public MfaSetupResult initiateMfaSetup(UUID userId, UUID tenantId, String email) {
-        log.info("Initiating MFA setup for user: {} in tenant: {}", userId, tenantId);
+        log.info("🔧 Initiating MFA setup for user: {} in tenant: {}", userId, tenantId);
 
         try {
             // Check if MFA is already configured
@@ -107,7 +108,7 @@ public class MfaService {
             mfaConfigRepo.save(config);
 
             // Encrypt backup codes and store them
-            List<String> encryptedBackupCodes = storeBackupCodes(userId, tenantId, totpSetup.getBackupCodes());
+            storeBackupCodes(userId, tenantId, totpSetup.getBackupCodes());
 
             log.info("✅ MFA setup initiated successfully for user: {}", userId);
 
@@ -115,7 +116,7 @@ public class MfaService {
                     totpSetup.getQrCodeUri(),
                     totpSetup.getQrCodeImage(),
                     totpSetup.getBackupCodes(),
-                    totpSetup.getSecret() // For testing purposes only
+                    totpSetup.getSecret()
             );
 
         } catch (Exception e) {
@@ -125,12 +126,12 @@ public class MfaService {
     }
 
     /**
-     * Complete MFA setup by verifying the first TOTP code
+     * ✅ FIXED: Complete MFA setup by verifying the first TOTP code
      */
     @Transactional
     public MfaVerificationResult completeMfaSetup(UUID userId, UUID tenantId, String totpCode,
                                                   String deviceFingerprint, String ipAddress, String userAgent) {
-        log.info("Completing MFA setup for user: {} with device: {}", userId, deviceFingerprint);
+        log.info("🔧 Completing MFA setup for user: {} with TOTP code", userId);
 
         try {
             // Get pending MFA configuration
@@ -138,12 +139,17 @@ public class MfaService {
                     .orElseThrow(() -> new IllegalStateException("No MFA setup found for user"));
 
             if (config.isSetupComplete()) {
-                throw new IllegalStateException("MFA setup already completed");
+                throw new MfaAlreadyConfiguredException("MFA setup has already been completed for this user");
             }
 
             // Decrypt secret and verify code
             String secret = encryptionService.decrypt(config.getEncryptedSecret());
+            log.debug("🔓 Decrypted TOTP secret for setup verification");
+
+            // ✅ KEY FIX: Use primary TOTP verification method
             boolean isValid = totpService.verifyCode(secret, totpCode);
+
+            log.info("🔍 TOTP code '{}' verification result: {}", totpCode, isValid);
 
             // Log attempt
             logAuthAttempt(userId, tenantId, "TOTP_SETUP", isValid, totpCode,
@@ -151,6 +157,7 @@ public class MfaService {
                     isValid ? null : "INVALID_CODE");
 
             if (!isValid) {
+                log.warn("❌ TOTP setup verification failed for user: {}", userId);
                 return new MfaVerificationResult(false, "Invalid TOTP code", false);
             }
 
@@ -178,6 +185,10 @@ public class MfaService {
             return new MfaVerificationResult(true, "MFA setup completed successfully",
                     trustedDeviceId != null);
 
+        } catch (MfaAlreadyConfiguredException e) {
+            // Re-throw MfaAlreadyConfiguredException directly to be handled by GlobalExceptionHandler
+            log.error("❌ MFA already configured for user {}: {}", userId, e.getMessage());
+            throw e;
         } catch (Exception e) {
             log.error("❌ Failed to complete MFA setup for user {}: {}", userId, e.getMessage(), e);
             throw new RuntimeException("Failed to complete MFA setup", e);
@@ -185,17 +196,17 @@ public class MfaService {
     }
 
     /**
-     * Verify MFA code during authentication
+     * ✅ FIXED: Verify MFA code during authentication
      */
     @Transactional
     public MfaVerificationResult verifyMfaCode(UUID userId, UUID tenantId, String code,
                                                String deviceFingerprint, String ipAddress, String userAgent) {
-        log.info("Verifying MFA code for user: {} from device: {}", userId, deviceFingerprint);
+        log.info("🔍 Verifying MFA code for user: {} from device: {}", userId, deviceFingerprint);
 
         try {
             // Check if device is trusted
             if (trustedDevicesEnabled && isTrustedDevice(userId, deviceFingerprint)) {
-                log.info("Trusted device detected, bypassing MFA for user: {}", userId);
+                log.info("✅ Trusted device detected, bypassing MFA for user: {}", userId);
                 updateTrustedDeviceLastSeen(userId, deviceFingerprint);
                 return new MfaVerificationResult(true, "Trusted device - MFA bypassed", true);
             }
@@ -206,7 +217,7 @@ public class MfaService {
 
             // Check if user is locked
             if (isUserLocked(config)) {
-                log.warn("MFA verification attempted for locked user: {}", userId);
+                log.warn("❌ MFA verification attempted for locked user: {}", userId);
                 logAuthAttempt(userId, tenantId, "TOTP", false, code, ipAddress, userAgent,
                         deviceFingerprint, false, "USER_LOCKED");
                 return new MfaVerificationResult(false, "Account temporarily locked due to failed attempts", false);
@@ -214,18 +225,20 @@ public class MfaService {
 
             // Check rate limiting
             if (isRateLimited(userId)) {
-                log.warn("Rate limited MFA attempt for user: {}", userId);
+                log.warn("❌ Rate limited MFA attempt for user: {}", userId);
                 logAuthAttempt(userId, tenantId, "TOTP", false, code, ipAddress, userAgent,
                         deviceFingerprint, false, "RATE_LIMITED");
                 return new MfaVerificationResult(false, "Too many attempts, please try again later", false);
             }
 
-            // Try TOTP verification first
+            // Decrypt secret
             String secret = encryptionService.decrypt(config.getEncryptedSecret());
+
+            // ✅ KEY FIX: Try TOTP verification first
             boolean isValidTotp = totpService.verifyCode(secret, code);
 
             if (isValidTotp) {
-                // Successful TOTP verification
+                log.info("✅ TOTP verification successful for user: {}", userId);
                 handleSuccessfulAuth(config, userId, tenantId, deviceFingerprint, ipAddress, userAgent, "TOTP");
                 return new MfaVerificationResult(true, "TOTP verified successfully", false);
             }
@@ -233,6 +246,7 @@ public class MfaService {
             // Try backup code verification
             boolean isValidBackupCode = verifyBackupCode(userId, tenantId, code, ipAddress);
             if (isValidBackupCode) {
+                log.info("✅ Backup code verification successful for user: {}", userId);
                 handleSuccessfulAuth(config, userId, tenantId, deviceFingerprint, ipAddress, userAgent, "BACKUP_CODE");
                 return new MfaVerificationResult(true, "Backup code verified successfully", false);
             }
@@ -252,7 +266,7 @@ public class MfaService {
      */
     @Transactional
     public List<String> regenerateBackupCodes(UUID userId, UUID tenantId) {
-        log.info("Regenerating backup codes for user: {}", userId);
+        log.info("🔄 Regenerating backup codes for user: {}", userId);
 
         try {
             // Delete existing backup codes
@@ -284,7 +298,7 @@ public class MfaService {
      */
     @Transactional
     public void disableMfa(UUID userId, UUID tenantId) {
-        log.info("Disabling MFA for user: {}", userId);
+        log.info("🔄 Disabling MFA for user: {}", userId);
 
         try {
             MfaConfigurationEntity config = mfaConfigRepo.findByUserIdAndTenantId(userId, tenantId)
@@ -356,7 +370,7 @@ public class MfaService {
      */
     @Transactional
     public void revokeTrustedDevice(UUID userId, UUID deviceId, UUID revokedBy) {
-        log.info("Revoking trusted device {} for user: {}", deviceId, userId);
+        log.info("🔄 Revoking trusted device {} for user: {}", deviceId, userId);
 
         try {
             trustedDeviceRepo.revokeDevice(deviceId, OffsetDateTime.now(), revokedBy);
@@ -414,7 +428,7 @@ public class MfaService {
                 config.setBackupCodesRemaining(Math.max(0, config.getBackupCodesRemaining() - 1));
                 mfaConfigRepo.save(config);
 
-                log.info("Backup code used successfully for user: {}", userId);
+                log.info("✅ Backup code used successfully for user: {}", userId);
                 return true;
             }
 
@@ -465,7 +479,7 @@ public class MfaService {
             device.setExpiresAt(OffsetDateTime.now().plusDays(trustedDeviceExpiryDays));
 
             MfaTrustedDeviceEntity saved = trustedDeviceRepo.save(device);
-            log.info("Created trusted device for user {}: {}", userId, saved.getId());
+            log.info("✅ Created trusted device for user {}: {}", userId, saved.getId());
             return saved.getId();
 
         } catch (Exception e) {
@@ -516,7 +530,7 @@ public class MfaService {
                 OffsetDateTime lockUntil = OffsetDateTime.now().plusMinutes(lockoutDurationMinutes);
                 mfaConfigRepo.updateLockStatus(userId, MfaConfigurationEntity.MfaStatusType.LOCKED,
                         lockUntil, OffsetDateTime.now());
-                log.warn("User {} locked due to {} failed MFA attempts", userId, newFailedAttempts);
+                log.warn("❌ User {} locked due to {} failed MFA attempts", userId, newFailedAttempts);
             } else {
                 // Just increment failed attempts
                 mfaConfigRepo.updateFailedAttempts(userId, newFailedAttempts, OffsetDateTime.now());
@@ -554,24 +568,20 @@ public class MfaService {
         }
     }
 
-    /**
-     * FIXED: Update user's MFA status in the users table
-     */
     private void updateUserMfaStatus(UUID userId, boolean enabled) {
         try {
             Optional<UserEntity> user = userRepository.findById(userId);
             if (user.isPresent()) {
                 UserEntity userEntity = user.get();
-                // FIXED: Use the correct setter method from the updated UserEntity
                 userEntity.setMfaEnabled(enabled);
                 if (enabled) {
                     userEntity.setLastMfaSetupAt(OffsetDateTime.now());
                 }
                 userRepository.save(userEntity);
 
-                log.debug("Updated MFA status for user {} to: {}", userId, enabled);
+                log.debug("✅ Updated MFA status for user {} to: {}", userId, enabled);
             } else {
-                log.warn("User not found when updating MFA status: {}", userId);
+                log.warn("❌ User not found when updating MFA status: {}", userId);
             }
         } catch (Exception e) {
             log.error("Error updating user MFA status for user {}: {}", userId, e.getMessage(), e);
@@ -584,7 +594,7 @@ public class MfaService {
             for (MfaTrustedDeviceEntity device : devices) {
                 trustedDeviceRepo.revokeDevice(device.getId(), OffsetDateTime.now(), userId);
             }
-            log.info("Revoked {} trusted devices for user: {}", devices.size(), userId);
+            log.info("✅ Revoked {} trusted devices for user: {}", devices.size(), userId);
 
         } catch (Exception e) {
             log.error("Error revoking trusted devices for user {}: {}", userId, e.getMessage(), e);
