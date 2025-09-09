@@ -628,7 +628,6 @@ public class AuthController {
 
             @Schema(description = "User roles", example = "[\"ADMIN\", \"ANALYST\"]")
             java.util.Set<String> roles,
-
             @Schema(description = "Tenant ID", example = "00000000-0000-0000-0000-000000000001")
             String tenantId,
 
